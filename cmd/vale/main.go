@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/errata-ai/vale/v3/internal/cache"
 	"github.com/errata-ai/vale/v3/internal/core"
 	"github.com/errata-ai/vale/v3/internal/lint"
 	"github.com/errata-ai/vale/v3/internal/system"
@@ -173,6 +174,16 @@ func main() {
 	linter, err := lint.NewLinter(config)
 	if err != nil {
 		handleError(err)
+	}
+
+	// A cache that cannot be opened is reported and then done without: a
+	// missing cache directory is no reason to refuse to lint.
+	if !Flags.NoCache {
+		if dir, cacheErr := cache.Dir(); cacheErr == nil {
+			if cacheErr = linter.EnableCache(dir, version); cacheErr != nil {
+				fmt.Fprintf(os.Stderr, "vale: caching disabled: %v\n", cacheErr)
+			}
+		}
 	}
 
 	linted, err := doLint(args, linter, Flags.Glob)

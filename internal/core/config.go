@@ -62,6 +62,7 @@ var ConfigDirs = []string{
 var ConfigVars = map[string]string{
 	"VALE_CONFIG_PATH": "Override the default search process by specifying a .vale.ini file.",
 	"VALE_STYLES_PATH": "Specify the location of the default StylesPath.",
+	"VALE_CACHE":       "Specify where to store the alerts of unchanged files.",
 }
 
 // ConfigNames is a list of all possible configuration file names.
@@ -180,6 +181,7 @@ type CLIFlags struct {
 	Normalize     bool
 	Relative      bool
 	Remote        bool
+	NoCache       bool
 	Simple        bool
 	Sorted        bool
 	Wrap          bool

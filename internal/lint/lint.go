@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/remeh/sizedwaitgroup"
 
+	"github.com/errata-ai/vale/v3/internal/cache"
 	"github.com/errata-ai/vale/v3/internal/check"
 	"github.com/errata-ai/vale/v3/internal/core"
 	"github.com/errata-ai/vale/v3/internal/glob"
@@ -51,6 +53,10 @@ type Linter struct {
 	// many, convert one document, and stop them again -- strictly more work
 	// than the one process the unpooled path used. Such a run keeps one.
 	singleDoc bool
+
+	// cache holds the alerts of files seen on an earlier run, and is nil when
+	// caching is switched off.
+	cache *cache.Cache
 
 	// inScope lists the rules whose scope matches a given block scope, keyed by
 	// the block's scope and parent.
@@ -256,6 +262,25 @@ func (l *Linter) lintFiles(done <-chan core.File, roots []string) (<-chan lintRe
 func (l *Linter) lintFile(src string) lintResult {
 	var err error
 
+	// A cached run reads the file twice, and only when the answer is not
+	// already known: once to address the entry, and once through NewFile,
+	// which the operating system serves from the page cache it just filled.
+	// Threading the bytes through instead would put a second constructor in
+	// core for the sake of a read that does not reach the disk.
+	var key cache.Key
+	cacheable := l.cacheable(src)
+	if cacheable {
+		content, readErr := os.ReadFile(src)
+		if readErr != nil {
+			return lintResult{err: readErr}
+		}
+
+		key = l.cacheKey(src, content)
+		if file, found := l.cachedResult(src, key); found {
+			return lintResult{file: file}
+		}
+	}
+
 	file, err := core.NewFile(src, l.Manager.Config)
 	if err != nil {
 		return lintResult{err: err}
@@ -329,6 +354,13 @@ func (l *Linter) lintFile(src string) lintResult {
 	// sanitizer's shifts say nothing about.
 	if err == nil && file.Transform == "" {
 		file.MapAlertsToSource()
+	}
+
+	// Only a complete answer is stored. A run that failed part way through has
+	// found some of the file's alerts, and remembering those as the whole set
+	// would hide the rest for as long as the entry lives.
+	if err == nil && cacheable {
+		l.storeResult(key, file)
 	}
 
 	return lintResult{file: file, err: err}
