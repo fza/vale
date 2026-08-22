@@ -2,8 +2,6 @@ package check
 
 import (
 	"testing"
-
-	"github.com/jdkato/prose/v3/strcase"
 )
 
 type changeCase struct {
@@ -74,7 +72,10 @@ func TestSentence(t *testing.T) {
 	}
 
 	for _, h := range headings {
-		sc := strcase.NewSentenceConverter(strcase.UsingVocab(h.exceptions))
+		sc, err := newSentenceConverter(h.exceptions, "", wasIndicator([]string{":"}))
+		if err != nil {
+			t.Fatal(err)
+		}
 		_, s := sentence(h.heading, nil, sc, 1)
 		if s != h.match {
 			t.Errorf("expected = %v, got = %v (%s)", h.match, s, h.heading)
