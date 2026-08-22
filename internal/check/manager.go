@@ -361,29 +361,36 @@ func (mgr *Manager) loadDefaultRules() error {
 		}
 	}
 
-	repetition := defaultRules["Repetition"]
-	if level, ok := mgr.Config.RuleToLevel["Vale.Repetition"]; ok {
-		repetition["level"] = level
-	}
-	repetition["path"] = "internal"
+	// The built-in rules answer to `Vale.Rule = NO` the same way a style's do,
+	// and building one is not free: `Vale.Spelling` reads a dictionary off
+	// disk, and `Vale.Terms` compiles a pattern holding the whole vocabulary.
+	if mgr.enabledSomewhere("Vale.Repetition") {
+		repetition := defaultRules["Repetition"]
+		if level, ok := mgr.Config.RuleToLevel["Vale.Repetition"]; ok {
+			repetition["level"] = level
+		}
+		repetition["path"] = "internal"
 
-	rule, err := buildRule(mgr.Config, repetition)
-	if err != nil {
-		return err
+		rule, err := buildRule(mgr.Config, repetition)
+		if err != nil {
+			return err
+		}
+		mgr.rules["Vale.Repetition"] = rule
 	}
-	mgr.rules["Vale.Repetition"] = rule
 
-	spelling := defaultRules["Spelling"]
-	if level, ok := mgr.Config.RuleToLevel["Vale.Spelling"]; ok {
-		spelling["level"] = level
-	}
-	spelling["path"] = "internal"
+	if mgr.enabledSomewhere("Vale.Spelling") {
+		spelling := defaultRules["Spelling"]
+		if level, ok := mgr.Config.RuleToLevel["Vale.Spelling"]; ok {
+			spelling["level"] = level
+		}
+		spelling["path"] = "internal"
 
-	rule, err = buildRule(mgr.Config, spelling)
-	if err != nil {
-		return err
+		rule, err := buildRule(mgr.Config, spelling)
+		if err != nil {
+			return err
+		}
+		mgr.rules["Vale.Spelling"] = rule
 	}
-	mgr.rules["Vale.Spelling"] = rule
 
 	// TODO: where should this go?
 	mgr.loadVocabRules()
@@ -424,7 +431,7 @@ func (mgr *Manager) loadStyles(styles []string) error {
 }
 
 func (mgr *Manager) loadVocabRules() {
-	if len(mgr.Config.AcceptedTokens) > 0 {
+	if len(mgr.Config.AcceptedTokens) > 0 && mgr.enabledSomewhere("Vale.Terms") {
 		vocab := defaultRules["Terms"]
 		for _, term := range mgr.Config.AcceptedTokens {
 			vocab["swap"].(map[string]string)[strings.ToLower(term)] = term
@@ -436,7 +443,7 @@ func (mgr *Manager) loadVocabRules() {
 		mgr.rules["Vale.Terms"] = rule
 	}
 
-	if len(mgr.Config.RejectedTokens) > 0 {
+	if len(mgr.Config.RejectedTokens) > 0 && mgr.enabledSomewhere("Vale.Avoid") {
 		avoid := defaultRules["Avoid"]
 		for _, term := range mgr.Config.RejectedTokens {
 			avoid["tokens"] = append(avoid["tokens"].([]string), term)
