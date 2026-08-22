@@ -40,6 +40,7 @@ func init() {
 		"With `vale fix`: write every unambiguous fix back to disk.")
 	pflag.BoolVar(&Flags.Coverage, "coverage", false,
 		"With `vale test`: fail when a rule produced no alert in any case.")
+	pflag.BoolVar(&Flags.NoCache, "no-cache", false, "Lint every file, ignoring any cached result.")
 	pflag.BoolVar(&Flags.Simple, "ignore-syntax", false, "Lint all files line-by-line.")
 	pflag.BoolVarP(&Flags.Version, "version", "v", false, "Print the current version.")
 	pflag.BoolVarP(&Flags.Help, "help", "h", false, "Print this help message.")

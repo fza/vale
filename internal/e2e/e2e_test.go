@@ -35,9 +35,12 @@ var update = flag.Bool("update", false, "rewrite the `want:` blocks in testdata/
 //
 // They pin the output format and keep results stable across platforms and
 // developer machines: `--normalize` and `--relative` make paths comparable,
-// `--sort` makes ordering deterministic, and `--no-global` keeps the caller's
-// own configuration out of the run.
-var sharedFlags = []string{"--output=line", "--sort", "--normalize", "--relative", "--no-global"}
+// `--sort` makes ordering deterministic, `--no-global` keeps the caller's own
+// configuration out of the run, and `--no-cache` makes every case lint what it
+// was given rather than what an earlier build reported for the same fixture.
+var sharedFlags = []string{
+	"--output=line", "--sort", "--normalize", "--relative", "--no-global", "--no-cache",
+}
 
 var (
 	valeBin  string // the binary under test
