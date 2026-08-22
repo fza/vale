@@ -70,29 +70,30 @@ func NewCapitalization(cfg *core.Config, generic baseCheck, path string) (Capita
 	}
 
 	if rule.Match == "$title" {
-		var tc *strcase.TitleConverter
+		style := strcase.APStyle
 		if rule.Style == "Chicago" {
-			tc = strcase.NewTitleConverter(
-				strcase.ChicagoStyle,
-				strcase.UsingVocab(rule.Exceptions),
-				strcase.UsingPrefix(rule.Prefix),
-			)
-		} else {
-			tc = strcase.NewTitleConverter(
-				strcase.APStyle,
-				strcase.UsingVocab(rule.Exceptions),
-				strcase.UsingPrefix(rule.Prefix),
-			)
+			style = strcase.ChicagoStyle
 		}
+		// strcase compiles each vocabulary term again for every word it
+		// examines, so a converter holding the whole vocabulary costs a
+		// thousand compilations per word. Building one per string, over only
+		// the terms the prefilter cannot rule out, leaves it a handful; the
+		// construction itself is a sort of that handful.
+		matcher := newVocabMatcher(rule.Exceptions)
 		rule.Check = func(s string, re *rx.Regexp) (string, bool) {
+			tc := strcase.NewTitleConverter(
+				style,
+				strcase.UsingVocab(matcher.candidates(s)),
+				strcase.UsingPrefix(rule.Prefix),
+			)
 			return title(s, re, tc, rule.Threshold)
 		}
 	} else if rule.Match == "$sentence" {
-		sc := strcase.NewSentenceConverter(
-			strcase.UsingVocab(rule.Exceptions),
-			strcase.UsingPrefix(rule.Prefix),
-			strcase.UsingIndicator(wasIndicator(rule.Indicators)),
-		)
+		sc, serr := newSentenceConverter(
+			rule.Exceptions, rule.Prefix, wasIndicator(rule.Indicators))
+		if serr != nil {
+			return rule, core.NewE201FromPosition(serr.Error(), path, 1)
+		}
 		rule.Check = func(s string, re *rx.Regexp) (string, bool) {
 			return sentence(s, re, sc, rule.Threshold)
 		}
