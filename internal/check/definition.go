@@ -409,6 +409,17 @@ func updateExceptions(previous []string, current []string, vocab bool) (*rx.Rege
 //
 // Returns nil when there are no multi-word terms (or one fails to compile, in
 // which case `updateExceptions` surfaces the error).
+// loosenPhraseSpacing rewrites the literal whitespace between the words of an
+// accepted phrase as a pattern matching any run of it. A phrase is compiled
+// into a pattern, so its own spacing has to admit whatever spacing the text
+// uses: a writer wraps a line between two words of an accepted phrase, and the
+// phrase means the same thing either way. Matching a single literal space
+// instead reports the component word as a finding, which reads as a rule
+// firing on correct text.
+func loosenPhraseSpacing(term string) string {
+	return strings.Join(strings.Fields(term), `\s+`)
+}
+
 func buildPhraseRe(previous, current []string, vocab bool) *rx.Regexp {
 	terms := append([]string{}, previous...)
 	if vocab {
@@ -418,7 +429,7 @@ func buildPhraseRe(previous, current []string, vocab bool) *rx.Regexp {
 	phrases := []string{}
 	for _, term := range terms {
 		if strings.ContainsAny(term, " \t") || strings.Contains(term, `\s`) {
-			phrases = append(phrases, term)
+			phrases = append(phrases, loosenPhraseSpacing(term))
 		}
 	}
 
