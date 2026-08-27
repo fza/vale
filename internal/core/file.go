@@ -23,6 +23,18 @@ var commentStyleRE = regexp.MustCompile(`^vale styles? = (.*)$`)
 
 var commentControlMatchesRE = regexp.MustCompile(`^vale (.+\..+)(\[.+\]) = (YES|NO)$`)
 
+// IsCommentControl reports whether a line is one of the `vale` directives
+// rather than prose. A caller that lints text in blocks needs to know before
+// UpdateComments does, because a directive has to leave the text it controls
+// rather than sit inside it as a sentence of its own.
+func IsCommentControl(line string) bool {
+	return line == "vale off" ||
+		line == "vale on" ||
+		commentControlRE.MatchString(line) ||
+		commentStyleRE.MatchString(line) ||
+		commentControlMatchesRE.MatchString(line)
+}
+
 // A File represents a linted text file.
 type File struct {
 	NLP        nlp.Info          // -

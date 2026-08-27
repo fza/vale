@@ -66,7 +66,12 @@ func (l *Linter) lintCode(f *core.File) error {
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
-		f.SetText(comment.Text)
+
+		text, linted := applyCommentDirectives(f, comment.Text)
+		if !linted {
+			continue
+		}
+		f.SetText(text)
 
 		err = l.lintLines(f)
 		if err != nil {
@@ -82,6 +87,47 @@ func (l *Linter) lintCode(f *core.File) error {
 
 	f.SetText(wholeFile)
 	return nil
+}
+
+// applyCommentDirectives consumes the `vale` control lines a comment carries and
+// blanks whatever they suppress, so a directive works in source the way it works
+// in markup. It reaches the file's own toggle state, so a directive carries into
+// later comments rather than ending with the one it sits in.
+//
+// A suppressed line becomes empty rather than disappearing. The line count and
+// every column survive, which is what lets an alert map back onto the source
+// through the comment's own strip table.
+//
+// A comment left with nothing to lint answers false, so the caller skips it
+// instead of measuring an empty block.
+func applyCommentDirectives(f *core.File, text string) (string, bool) {
+	if !strings.Contains(text, "vale ") && !f.Comments["off"] {
+		return text, true
+	}
+
+	lines := strings.Split(text, "\n")
+	linted := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if core.IsCommentControl(trimmed) {
+			f.UpdateComments(trimmed)
+			lines[i] = ""
+			continue
+		}
+
+		if f.Comments["off"] {
+			lines[i] = ""
+			continue
+		}
+
+		if trimmed != "" {
+			linted = true
+		}
+	}
+
+	return strings.Join(lines, "\n"), linted
 }
 
 // lintCodeOld lints source code by analyzing its comments.
