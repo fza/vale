@@ -169,3 +169,47 @@ func TestEachDirectiveRunCarriesAcrossComments(t *testing.T) {
 		t.Errorf("on should resume linting: got %q", runs)
 	}
 }
+
+// A code comment carries no markup, so a prose rule used to read the notation it
+// names -- an identifier, a flag, a path -- as ordinary English. Backticks mark
+// that notation, and masking the span makes a comment read the way Markdown does.
+func TestMaskCode(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"no backticks passes through", "Plain prose here.", "Plain prose here."},
+		{"a span becomes spaces of its own width", "See `worktreePath` first.", "See                first."},
+		{"two spans on one line", "`a` and `bb`.", "    and     ."},
+		{"an unclosed backtick swallows nothing", "A ` lone tick.", "A ` lone tick."},
+		{"a span never crosses a line", "open ` here\nand ` there", "open ` here\nand ` there"},
+		{
+			"a fence is blanked and keeps its line breaks",
+			"Shape:\n\n```\nfoo(bar)\n```\n\nDone.",
+			"Shape:\n\n   \n        \n   \n\nDone.",
+		},
+		{
+			"a span inside a fence is blanked once",
+			"```\nsee `x` here\n```",
+			"   \n            \n   ",
+		},
+		{
+			"an unclosed fence swallows nothing",
+			"```\nfoo(bar)\nstill prose.",
+			"```\nfoo(bar)\nstill prose.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskCode(tt.text)
+			if got != tt.want {
+				t.Errorf("notation should be blanked in place: got %q, want %q", got, tt.want)
+			}
+			if len(got) != len(tt.text) {
+				t.Errorf("byte length has to survive, or an alert maps onto the wrong column")
+			}
+		})
+	}
+}
