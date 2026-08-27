@@ -99,6 +99,10 @@ func (l *Linter) lintCode(f *core.File) error {
 // word is a label and stays prose.
 var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
 
+// packageOpener matches the name in a package comment, which opens with the
+// word `Package` before it.
+var packageOpener = regexp.MustCompile(`^(Package\s+)([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
+
 // maskDocOpener blanks the word a comment opens with when the declaration
 // beneath names it, so a documented symbol reads as code rather than as prose.
 // Go, C, Swift and Rust all ask a doc comment to open with the name it
@@ -123,11 +127,18 @@ func maskDocOpener(source []string, comment code.Comment) string {
 		return comment.Text
 	}
 
-	if !declares(source, comment, m[1]) {
+	at, name := indent, m[1]
+	// A package comment opens with the word `Package` and then the name, which
+	// the convention asks for bare in that second position.
+	if pm := packageOpener.FindStringSubmatch(lines[opener][indent:]); pm != nil {
+		at, name = indent+len(pm[1]), pm[2]
+	}
+
+	if !declares(source, comment, name) {
 		return comment.Text
 	}
 
-	lines[opener] = lines[opener][:indent] + strings.Repeat(" ", len(m[1])) + lines[opener][indent+len(m[1]):]
+	lines[opener] = lines[opener][:at] + strings.Repeat(" ", len(name)) + lines[opener][at+len(name):]
 	return strings.Join(lines, "\n")
 }
 

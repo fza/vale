@@ -76,3 +76,45 @@ func TestMaskDocOpener(t *testing.T) {
 		})
 	}
 }
+
+// A package comment opens with the word `Package` and then the name, and Go
+// asks for it bare there too.
+func TestMaskPackageOpener(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		comment code.Comment
+		want    string
+	}{
+		{
+			name:    "the package clause below names it",
+			content: "// Package engine implements the backend.\npackage engine\n",
+			comment: code.Comment{Text: "Package engine implements the backend.", Source: "// Package engine implements the backend.", Line: 1},
+			want:    "Package        implements the backend.",
+		},
+		{
+			name:    "a different name still reports",
+			content: "// Package motor implements the backend.\npackage engine\n",
+			comment: code.Comment{Text: "Package motor implements the backend.", Source: "// Package motor implements the backend.", Line: 1},
+			want:    "Package motor implements the backend.",
+		},
+		{
+			name:    "prose opening with the word is left alone",
+			content: "// Package layout follows one rule.\ntype Registry struct{}\n",
+			comment: code.Comment{Text: "Package layout follows one rule.", Source: "// Package layout follows one rule.", Line: 1},
+			want:    "Package layout follows one rule.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskDocOpener(strings.Split(tt.content, "\n"), tt.comment)
+			if got != tt.want {
+				t.Errorf("the package name should be blanked only when the clause names it: got %q, want %q", got, tt.want)
+			}
+			if len(got) != len(tt.comment.Text) {
+				t.Error("byte length has to survive, or an alert maps onto the wrong column")
+			}
+		})
+	}
+}
