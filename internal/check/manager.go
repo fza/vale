@@ -557,6 +557,24 @@ func (mgr *Manager) loadStyles(styles []string) error {
 	return nil
 }
 
+// vocabSpellings maps each token a vocabulary accepts onto every spelling it
+// carries, joined as an alternation. A vocabulary lists what a project accepts,
+// so a token spelled more than one way keeps each spelling rather than whichever
+// line came last. The value is matched as a pattern, so an alternation accepts
+// every listed spelling and reports none of them.
+func vocabSpellings(tokens []string) map[string]string {
+	swap := make(map[string]string, len(tokens))
+	for _, term := range tokens {
+		key := termPattern(strings.ToLower(term))
+		if seen, ok := swap[key]; ok && seen != term {
+			swap[key] = seen + "|" + term
+			continue
+		}
+		swap[key] = term
+	}
+	return swap
+}
+
 func (mgr *Manager) loadVocabRules() {
 	mgr.addTerms("Vale.Terms", mgr.Config.AcceptedTokens)
 	mgr.addAvoid("Vale.Avoid", mgr.Config.RejectedTokens)
@@ -585,13 +603,13 @@ func (mgr *Manager) addTerms(name string, terms []string) {
 		return
 	}
 	own := mgr.Config.WordTemplate == ""
-	swap := make(map[string]string, len(terms))
-	for _, term := range terms {
-		pattern := termPattern(strings.ToLower(term))
-		if own {
-			pattern = `(?<!\w)` + pattern + `(?!\w)`
+	swap := vocabSpellings(terms)
+	if own {
+		bounded := make(map[string]string, len(swap))
+		for pattern, spellings := range swap {
+			bounded[`(?<!\w)`+pattern+`(?!\w)`] = spellings
 		}
-		swap[pattern] = term
+		swap = bounded
 	}
 	vocab := cloneRule(defaultRules["Terms"])
 	vocab["name"], vocab["swap"] = name, swap
