@@ -83,7 +83,7 @@ func (l *Linter) lintFragments(f *core.File) error {
 		if format == "" {
 			format = strings.TrimPrefix(f.NormedExt, ".")
 		}
-		err = l.lintComment(f, comment, format, converted[i])
+		err = l.lintComment(f, comment.Text, format, converted[i])
 		if err != nil {
 			return err
 		}
