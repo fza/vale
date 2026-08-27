@@ -430,11 +430,30 @@ func (mgr *Manager) loadStyles(styles []string) error {
 	return nil
 }
 
+// vocabSpellings maps each token a vocabulary accepts onto every spelling it
+// carries, joined as an alternation. A vocabulary lists what a project accepts,
+// so a token spelled more than one way keeps each spelling rather than whichever
+// line came last. The value is matched as a pattern, so an alternation accepts
+// every listed spelling and reports none of them.
+func vocabSpellings(tokens []string) map[string]string {
+	swap := make(map[string]string, len(tokens))
+	for _, term := range tokens {
+		key := strings.ToLower(term)
+		if seen, ok := swap[key]; ok && seen != term {
+			swap[key] = seen + "|" + term
+			continue
+		}
+		swap[key] = term
+	}
+	return swap
+}
+
 func (mgr *Manager) loadVocabRules() {
 	if len(mgr.Config.AcceptedTokens) > 0 && mgr.enabledSomewhere("Vale.Terms") {
 		vocab := defaultRules["Terms"]
-		for _, term := range mgr.Config.AcceptedTokens {
-			vocab["swap"].(map[string]string)[strings.ToLower(term)] = term
+		swap := vocab["swap"].(map[string]string)
+		for key, term := range vocabSpellings(mgr.Config.AcceptedTokens) {
+			swap[key] = term
 		}
 		if level, ok := mgr.Config.RuleToLevel["Vale.Terms"]; ok {
 			vocab["level"] = level
