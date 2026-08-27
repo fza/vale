@@ -70,6 +70,11 @@ func TestEachDirectiveRun(t *testing.T) {
 			want: []string{"Intro.\n\n\n\n", "\n\n\n\nTail."},
 		},
 		{
+			name: "a tag opens and closes the same region",
+			text: "Intro.\n<vale off>\n    \"quoted\"\n</vale off>\nTail.",
+			want: []string{"Intro.\n\n\n\n", "\n\n\n\nTail."},
+		},
+		{
 			name: "a per-check directive splits the runs",
 			text: "Intro.\nvale House.Passive = NO\nStill linted.",
 			want: []string{"Intro.\n\n", "\n\nStill linted."},

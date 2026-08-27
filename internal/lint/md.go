@@ -58,7 +58,10 @@ func (l *Linter) lintMarkdownWith(f *core.File, md goldmark.Markdown) error {
 		return err
 	}
 
-	src := []byte(s)
+	// A directive written as a tag is rewritten into the comment form before
+	// parsing, because a closing tag holds no attribute and a Markdown parser
+	// escapes it into paragraph text rather than passing it through as markup.
+	src := []byte(markTagDirectives(s))
 	ctx := l.mystContext()
 	doc := md.Parser().Parse(text.NewReader(src), parser.WithContext(ctx))
 	if err = md.Renderer().Render(&buf, src, doc); err != nil {
@@ -88,6 +91,48 @@ func (l *Linter) lintMarkdownWith(f *core.File, md goldmark.Markdown) error {
 	}
 	f.Content = prepMarkdown(f.Content)
 	return l.lintHTMLTokens(f, buf.Bytes(), 0)
+}
+
+// markTagDirectives rewrites a directive written as a tag into the comment form
+// Markdown carries through to HTML. A closing tag holds no attribute, so
+// `</vale off>` is not valid HTML and a Markdown parser escapes it into
+// paragraph text rather than passing it through as markup.
+//
+// Only a line holding nothing else is rewritten, and never one inside a fence,
+// so a document showing a directive keeps showing it. The line survives as a
+// line, which is what keeps every later alert on the row it belongs to.
+func markTagDirectives(text string) string {
+	if !strings.Contains(text, "vale") {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	fence := ""
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fence = trimmed[:3]
+			continue
+		}
+
+		directive, ok := core.NormalizeDirective(trimmed)
+		if !ok {
+			continue
+		}
+
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + "<!-- " + directive + " -->"
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func prepMarkdown(content string) string {
