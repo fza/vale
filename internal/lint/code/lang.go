@@ -75,6 +75,8 @@ func GetLanguageFromExt(ext string) (*Language, error) {
 		return YAML(), nil
 	case ".css":
 		return CSS(), nil
+	case ".sh":
+		return Shell(), nil
 	default:
 		return nil, fmt.Errorf("unsupported extension: '%s'", ext)
 	}
