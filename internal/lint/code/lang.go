@@ -138,6 +138,8 @@ func languageFor(ext string) *Language {
 		return TOML()
 	case ".css":
 		return CSS()
+	case ".sh":
+		return Shell()
 	default:
 		return nil
 	}
