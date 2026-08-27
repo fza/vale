@@ -36,6 +36,10 @@ type walker struct {
 	idx int
 	z   *html.Tokenizer
 
+	// rawTok is the source text of the token walk last returned, captured
+	// before Token reuses the buffer Raw points into.
+	rawTok string
+
 	// cursor is how far into the context we have already emitted blocks.
 	//
 	// Blocks come out in document order, so searching forward from here finds
@@ -371,8 +375,17 @@ func (w *walker) sourceOffset(i int) int {
 
 func (w *walker) walk() (html.TokenType, html.Token, string) {
 	tokt := w.z.Next()
+	// Raw is captured before Token, which reuses the buffer it points into.
+	w.rawTok = string(w.z.Raw())
 	tok := w.z.Token()
 	return tokt, tok, html.UnescapeString(strings.TrimSpace(tok.Data))
+}
+
+// raw is the source text of the token walk just returned. A directive written as
+// a tag is read from here rather than from the token, because a tokenizer
+// lowercases an attribute name and drops the ones on a closing tag.
+func (w *walker) raw() string {
+	return w.rawTok
 }
 
 func (w *walker) replaceToks(tok html.Token) {

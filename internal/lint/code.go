@@ -67,67 +67,89 @@ func (l *Linter) lintCode(f *core.File) error {
 			continue
 		}
 
-		text, linted := applyCommentDirectives(f, comment.Text)
-		if !linted {
-			continue
-		}
-		f.SetText(text)
+		err = eachDirectiveRun(f, comment.Text, func(text string) error {
+			f.SetText(text)
 
-		err = l.lintLines(f)
+			runErr := l.lintLines(f)
+			if runErr != nil {
+				return runErr
+			}
+
+			size := len(f.Alerts)
+			if size != last {
+				f.Alerts = adjustAlerts(f.Alerts, last, comment, lang)
+			}
+			last = size
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-
-		size := len(f.Alerts)
-		if size != last {
-			f.Alerts = adjustAlerts(f.Alerts, last, comment, lang)
-		}
-		last = size
 	}
 
 	f.SetText(wholeFile)
 	return nil
 }
 
-// applyCommentDirectives consumes the `vale` control lines a comment carries and
-// blanks whatever they suppress, so a directive works in source the way it works
-// in markup. It reaches the file's own toggle state, so a directive carries into
-// later comments rather than ending with the one it sits in.
+// eachDirectiveRun splits a comment at the `vale` control lines it carries and
+// hands each run to lint, so a directive works in source the way it works in
+// markup. A run is linted under the toggle state its own lines sit beneath,
+// which is what makes a rule-specific directive suppress that rule alone.
 //
-// A suppressed line becomes empty rather than disappearing. The line count and
-// every column survive, which is what lets an alert map back onto the source
-// through the comment's own strip table.
+// Every run keeps the comment's full height: a line outside it, and a line the
+// directive suppressed, is blank rather than absent. The line count and every
+// column survive, which is what lets an alert map back onto the source through
+// the comment's own strip table.
 //
-// A comment left with nothing to lint answers false, so the caller skips it
-// instead of measuring an empty block.
-func applyCommentDirectives(f *core.File, text string) (string, bool) {
+// A run holding nothing to lint is skipped rather than measured.
+//
+// The toggle state reaches the file itself, so a directive carries into later
+// comments rather than ending with the one it sits in.
+func eachDirectiveRun(f *core.File, text string, lint func(string) error) error {
 	if !strings.Contains(text, "vale ") && !f.Comments["off"] {
-		return text, true
+		return lint(text)
 	}
 
 	lines := strings.Split(text, "\n")
-	linted := false
+	run := make([]string, len(lines))
+	pending := false
+
+	flush := func() error {
+		if !pending {
+			return nil
+		}
+		joined := strings.Join(run, "\n")
+		for i := range run {
+			run[i] = ""
+		}
+		pending = false
+		return lint(joined)
+	}
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if directive, ok := core.NormalizeDirective(trimmed); ok {
+			trimmed = directive
+		}
 
 		if core.IsCommentControl(trimmed) {
+			err := flush()
+			if err != nil {
+				return err
+			}
 			f.UpdateComments(trimmed)
-			lines[i] = ""
 			continue
 		}
 
-		if f.Comments["off"] {
-			lines[i] = ""
+		if f.Comments["off"] || trimmed == "" {
 			continue
 		}
 
-		if trimmed != "" {
-			linted = true
-		}
+		run[i] = line
+		pending = true
 	}
 
-	return strings.Join(lines, "\n"), linted
+	return flush()
 }
 
 // lintCodeOld lints source code by analyzing its comments.

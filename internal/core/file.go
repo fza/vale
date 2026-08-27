@@ -23,6 +23,42 @@ var commentStyleRE = regexp.MustCompile(`^vale styles? = (.*)$`)
 
 var commentControlMatchesRE = regexp.MustCompile(`^vale (.+\..+)(\[.+\]) = (YES|NO)$`)
 
+// valeTagRE matches the tag form of a directive, which reads the same in markup
+// and in a code comment: `<vale off>` opens a region and `</vale off>` closes it.
+var valeTagRE = regexp.MustCompile(`^</?\s*vale\s+([^<>]*?)\s*>$`)
+
+// NormalizeDirective turns the tag form of a directive into the bare form the
+// rest of this package reads, and reports whether it was one. A closing tag
+// carries the opposite sense of the one it closes, so `</vale off>` reads as
+// `vale on` and `</vale House.Passive>` restores that rule.
+//
+// The tag is read from its own source text rather than from a parsed token,
+// because an HTML tokenizer lowercases an attribute name and drops the ones on
+// a closing tag, and a rule name is case-sensitive.
+func NormalizeDirective(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+
+	m := valeTagRE.FindStringSubmatch(raw)
+	if m == nil {
+		return raw, false
+	}
+
+	body := strings.TrimSpace(m[1])
+	if !strings.HasPrefix(raw, "</") {
+		return "vale " + body, true
+	}
+
+	switch {
+	case strings.EqualFold(body, "off"):
+		return "vale on", true
+	case strings.EqualFold(body, "on"):
+		return "vale off", true
+	case strings.Contains(body, "="):
+		return "vale " + body, true
+	}
+	return "vale " + body + " = YES", true
+}
+
 // IsCommentControl reports whether a line is one of the `vale` directives
 // rather than prose. A caller that lints text in blocks needs to know before
 // UpdateComments does, because a directive has to leave the text it controls
