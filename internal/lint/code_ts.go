@@ -242,6 +242,9 @@ func eachDirectiveRun(f *core.File, text string, lint func(string) error) error 
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if directive, ok := core.NormalizeDirective(trimmed); ok {
+			trimmed = directive
+		}
 
 		if core.IsCommentControl(trimmed) {
 			err := flush()

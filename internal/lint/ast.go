@@ -120,6 +120,16 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 	for {
 		tokt, tok, txt := walker.walk()
 
+		// A directive written as a tag reaches the same toggle an HTML comment
+		// does, so one spelling serves markup and source alike. It is consumed
+		// before any element bookkeeping, because it names no real element.
+		if txt == "vale" && (tokt == html.StartTagToken || tokt == html.EndTagToken) {
+			if directive, ok := core.NormalizeDirective(walker.raw()); ok {
+				f.UpdateComments(directive)
+				continue
+			}
+		}
+
 		isInline := core.StringInSlice(txt, inlineTags)
 		switch {
 		case tokt == html.StartTagToken && !isInline && !core.StringInSlice(txt, voidTags) &&
@@ -239,8 +249,11 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 				padComment = trailing
 			}
 			// Found before `update` masks it out of the context.
-			f.UpdateCommentsAt(txt, walker.commentAt(txt))
-			walker.update(txt, tokt)
+			off, masked := walker.commentAt(txt)
+			f.UpdateCommentsAt(txt, off)
+			if !masked {
+				walker.update(txt, tokt)
+			}
 		} else if tokt == html.TextToken {
 			skip = skip || shouldBeSkipped(walker.tagHistory, f.NormedExt)
 			// NOTE: We used to create a "temporary" context here to support
