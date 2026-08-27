@@ -72,6 +72,8 @@ func (l *Linter) lintCode(f *core.File) error {
 		return err
 	}
 	wholeFile := f.Content
+	// Read before the loop, which replaces the file's text with each comment's.
+	source := strings.Split(wholeFile, "\n")
 
 	converted := l.rstBatch(f, comments, "")
 
@@ -81,7 +83,13 @@ func (l *Linter) lintCode(f *core.File) error {
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
-		err = l.lintComment(f, comment, comment.Format, converted[i])
+		// Only a comment opens with the symbol it documents. A batch
+		// converted the comment as written, which a masked one no longer is.
+		text, html := maskDocOpener(source, comment), converted[i]
+		if text != comment.Text {
+			html = ""
+		}
+		err = l.lintComment(f, text, comment.Format, html)
 		if err != nil {
 			return err
 		}
@@ -172,7 +180,7 @@ func dropMasked(alerts []core.Alert, last int, comment code.Comment) []core.Aler
 	return kept
 }
 
-// lintComment lints one comment as the markup named -- `md`, `rst`, `html`,
+// lintComment lints one comment's text as the markup named -- `md`, `rst`, `html`,
 // `org`, `adoc`, or `qdoc` -- or as plain lines when none is.
 //
 // A View's scope names the markup its comments are written in, so a fenced
@@ -182,16 +190,16 @@ func dropMasked(alerts []core.Alert, last int, comment code.Comment) []core.Aler
 //
 // html is the comment already converted, when it was part of a batch (see
 // rstBatch), and empty otherwise.
-func (l *Linter) lintComment(f *core.File, comment code.Comment, format, html string) error {
+func (l *Linter) lintComment(f *core.File, text, format, html string) error {
 	if format == "" {
-		f.SetText(maskURLs(comment.Text))
+		f.SetText(maskURLs(text))
 		return l.lintLines(f)
 	}
 
 	kind, ext := f.Format, f.NormedExt
 	f.Format = "fragment"
 	f.SetNormedExt(format)
-	f.SetText(comment.Text)
+	f.SetText(text)
 
 	var err error
 	switch f.NormedExt {
@@ -217,6 +225,91 @@ func (l *Linter) lintComment(f *core.File, comment code.Comment, format, html st
 
 	f.Format, f.NormedExt = kind, ext
 	return err
+}
+
+// docOpener matches the word a comment opens with, which is the only position
+// backticks cannot reach: the convention asks for the symbol bare. A colon
+// after it makes the comment an annotation rather than documentation, so the
+// word is a label and stays prose.
+var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
+
+// maskDocOpener blanks the word a comment opens with when the declaration
+// beneath names it, so a documented symbol reads as code rather than as prose.
+// Go, C, Swift and Rust all ask a doc comment to open with the name it
+// documents, and no markup is allowed in that position.
+//
+// The name has to appear in the declaration for the mask to apply, so a comment
+// opening with a misspelled name still reports: nothing beneath it matches.
+func maskDocOpener(source []string, comment code.Comment) string {
+	lines := strings.Split(comment.Text, "\n")
+
+	opener := 0
+	for opener < len(lines) && strings.TrimSpace(lines[opener]) == "" {
+		opener++
+	}
+	if opener == len(lines) {
+		return comment.Text
+	}
+
+	indent := len(lines[opener]) - len(strings.TrimLeft(lines[opener], " \t"))
+	m := docOpener.FindStringSubmatch(lines[opener][indent:])
+	if m == nil {
+		return comment.Text
+	}
+
+	if !declares(source, comment, m[1]) {
+		return comment.Text
+	}
+
+	lines[opener] = lines[opener][:indent] + strings.Repeat(" ", len(m[1])) + lines[opener][indent+len(m[1]):]
+	return strings.Join(lines, "\n")
+}
+
+// declares reports whether the source below a comment names the given word. It
+// reads the first line that is neither blank nor a comment of its own, which is
+// where a declaration sits in every language carrying this convention.
+func declares(source []string, comment code.Comment, name string) bool {
+	// The comment's own last line, indexed from zero, is the line before the
+	// one to read. A trailing newline adds no line, so it is trimmed first.
+	below := comment.Line - 1 + strings.Count(strings.TrimRight(comment.Source, "\n"), "\n") + 1
+
+	for i := below; i < len(source) && i < below+4; i++ {
+		line := strings.TrimSpace(source[i])
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") ||
+			strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return namedIn(line, name)
+	}
+	return false
+}
+
+// namedIn reports whether a line carries the name as a whole word rather than
+// as part of a longer one.
+func namedIn(line, name string) bool {
+	for at := 0; ; {
+		i := strings.Index(line[at:], name)
+		if i < 0 {
+			return false
+		}
+		i += at
+
+		before := i == 0 || !isWordByte(line[i-1])
+		end := i + len(name)
+		after := end == len(line) || !isWordByte(line[end])
+
+		if before && after {
+			return true
+		}
+		at = i + 1
+	}
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
 }
 
 // lintCodeOld lints source code by analyzing its comments.
