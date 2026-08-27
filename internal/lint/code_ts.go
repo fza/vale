@@ -9,6 +9,7 @@ package lint
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/lint/code"
@@ -54,17 +55,29 @@ func (l *Linter) lintCode(f *core.File) error {
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
-		err = l.lintComment(f, comment, comment.Format, converted[i])
+		err = eachDirectiveRun(f, comment.Text, func(run string) error {
+			// A batch converted the comment whole, which a run split at a
+			// directive no longer is.
+			html := ""
+			if run == comment.Text {
+				html = converted[i]
+			}
+			runErr := l.lintComment(f, run, comment.Format, html)
+			if runErr != nil {
+				return runErr
+			}
+			f.Alerts = dropMasked(f.Alerts, last, comment)
+
+			size := len(f.Alerts)
+			if size != last {
+				f.Alerts = adjustAlerts(f.Alerts, last, comment)
+			}
+			last = size
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-		f.Alerts = dropMasked(f.Alerts, last, comment)
-
-		size := len(f.Alerts)
-		if size != last {
-			f.Alerts = adjustAlerts(f.Alerts, last, comment)
-		}
-		last = size
 	}
 
 	f.SetText(wholeFile)
@@ -145,7 +158,7 @@ func dropMasked(alerts []core.Alert, last int, comment code.Comment) []core.Aler
 	return kept
 }
 
-// lintComment lints one comment as the markup named -- `md`, `rst`, `html`,
+// lintComment lints one comment's text as the markup named -- `md`, `rst`, `html`,
 // `org`, `adoc`, or `qdoc` -- or as plain lines when none is.
 //
 // A View's scope names the markup its comments are written in, so a fenced
@@ -155,16 +168,16 @@ func dropMasked(alerts []core.Alert, last int, comment code.Comment) []core.Aler
 //
 // html is the comment already converted, when it was part of a batch (see
 // rstBatch), and empty otherwise.
-func (l *Linter) lintComment(f *core.File, comment code.Comment, format, html string) error {
+func (l *Linter) lintComment(f *core.File, text, format, html string) error {
 	if format == "" {
-		f.SetText(maskURLs(comment.Text))
+		f.SetText(maskURLs(text))
 		return l.lintLines(f)
 	}
 
 	kind, ext := f.Format, f.NormedExt
 	f.Format = "fragment"
 	f.SetNormedExt(format)
-	f.SetText(comment.Text)
+	f.SetText(text)
 
 	var err error
 	switch f.NormedExt {
@@ -190,6 +203,64 @@ func (l *Linter) lintComment(f *core.File, comment code.Comment, format, html st
 
 	f.Format, f.NormedExt = kind, ext
 	return err
+}
+
+// eachDirectiveRun splits a comment at the `vale` control lines it carries and
+// hands each run to lint, so a directive works in source the way it works in
+// markup. A run is linted under the toggle state its own lines sit beneath,
+// which is what makes a rule-specific directive suppress that rule alone.
+//
+// Every run keeps the comment's full height: a line outside it, and a line the
+// directive suppressed, is blank rather than absent. The line count and every
+// column survive, which is what lets an alert map back onto the source through
+// the comment's own strip table.
+//
+// A run holding nothing to lint is skipped rather than measured.
+//
+// The toggle state reaches the file itself, so a directive carries into later
+// comments rather than ending with the one it sits in.
+func eachDirectiveRun(f *core.File, text string, lint func(string) error) error {
+	if !strings.Contains(text, "vale ") && !f.Comments["off"] {
+		return lint(text)
+	}
+
+	lines := strings.Split(text, "\n")
+	run := make([]string, len(lines))
+	pending := false
+
+	flush := func() error {
+		if !pending {
+			return nil
+		}
+		joined := strings.Join(run, "\n")
+		for i := range run {
+			run[i] = ""
+		}
+		pending = false
+		return lint(joined)
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if core.IsCommentControl(trimmed) {
+			err := flush()
+			if err != nil {
+				return err
+			}
+			f.UpdateComments(trimmed)
+			continue
+		}
+
+		if f.Comments["off"] || trimmed == "" {
+			continue
+		}
+
+		run[i] = line
+		pending = true
+	}
+
+	return flush()
 }
 
 // lintCodeOld lints source code by analyzing its comments.
