@@ -21,6 +21,36 @@ func TestMaskDocOpener(t *testing.T) {
 			want:    "           makes a directory.",
 		},
 		{
+			name:    "a run of names the block below declares",
+			content: "// Stdin / Stdout / Stderr may each be nil.\nStdin  io.Reader\nStdout io.Writer\nStderr io.Writer\n",
+			comment: code.Comment{Text: "Stdin / Stdout / Stderr may each be nil.", Source: "// Stdin / Stdout / Stderr may each be nil.", Line: 1},
+			want:    "      /        /        may each be nil.",
+		},
+		{
+			name:    "a run whose later name nothing declares keeps that name",
+			content: "// Stdin / Stdround may each be nil.\nStdin io.Reader\n",
+			comment: code.Comment{Text: "Stdin / Stdround may each be nil.", Source: "// Stdin / Stdround may each be nil.", Line: 1},
+			want:    "      / Stdround may each be nil.",
+		},
+		{
+			name:    "a run whose first name nothing declares masks nothing",
+			content: "// Stdon / Stdout may each be nil.\nStdout io.Writer\n",
+			comment: code.Comment{Text: "Stdon / Stdout may each be nil.", Source: "// Stdon / Stdout may each be nil.", Line: 1},
+			want:    "Stdon / Stdout may each be nil.",
+		},
+		{
+			name:    "a run of interface methods on their own lines",
+			content: "// DBDump / DBPull streams it down.\nDBDump(w io.Writer) error\nDBPull(w io.Writer) error\n",
+			comment: code.Comment{Text: "DBDump / DBPull streams it down.", Source: "// DBDump / DBPull streams it down.", Line: 1},
+			want:    "       /        streams it down.",
+		},
+		{
+			name:    "a slashed run after the opening stays prose",
+			content: "// Stdin carries and/or holds it.\nStdin io.Reader\n",
+			comment: code.Comment{Text: "Stdin carries and/or holds it.", Source: "// Stdin carries and/or holds it.", Line: 1},
+			want:    "      carries and/or holds it.",
+		},
+		{
 			name:    "a misspelled opener still reports",
 			content: "// stagingDur makes a directory.\nfunc stagingDir() {}\n",
 			comment: code.Comment{Text: "stagingDur makes a directory.", Source: "// stagingDur makes a directory.", Line: 1},

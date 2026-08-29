@@ -93,11 +93,13 @@ func (l *Linter) lintCode(f *core.File) error {
 	return nil
 }
 
-// docOpener matches the word a comment opens with, which is the only position
-// backticks cannot reach: the convention asks for the symbol bare. A colon
-// after it makes the comment an annotation rather than documentation, so the
-// word is a label and stays prose.
-var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
+// docOpener matches the run of names a comment opens with, which is the only
+// position backticks cannot reach: the convention asks for the symbol bare. One
+// comment may document several symbols at once, written as names separated by
+// slashes, and every name in that run is asked for bare. A colon after the run
+// makes the comment an annotation rather than documentation, so the words are a
+// label and stay prose.
+var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*(?:\s*/\s*[A-Za-z_][A-Za-z0-9_]*)*)(?:[^:\w]|$)`)
 
 // packageOpener matches the name in a package comment, which opens with the
 // word `Package` before it.
@@ -122,33 +124,121 @@ func maskDocOpener(source []string, comment code.Comment) string {
 	}
 
 	indent := len(lines[opener]) - len(strings.TrimLeft(lines[opener], " \t"))
-	m := docOpener.FindStringSubmatch(lines[opener][indent:])
+	rest := lines[opener][indent:]
+
+	// A package comment opens with the word `Package` and then one name, which
+	// the convention asks for bare in that second position.
+	if pm := packageOpener.FindStringSubmatch(rest); pm != nil {
+		if !declares(source, comment, pm[2]) {
+			return comment.Text
+		}
+
+		lines[opener] = mask(lines[opener], indent+len(pm[1]), len(pm[2]))
+
+		return strings.Join(lines, "\n")
+	}
+
+	m := docOpener.FindStringSubmatch(rest)
 	if m == nil {
 		return comment.Text
 	}
 
-	at, name := indent, m[1]
-	// A package comment opens with the word `Package` and then the name, which
-	// the convention asks for bare in that second position.
-	if pm := packageOpener.FindStringSubmatch(lines[opener][indent:]); pm != nil {
-		at, name = indent+len(pm[1]), pm[2]
-	}
-
-	if !declares(source, comment, name) {
+	names, offsets := runNames(m[1])
+	if len(names) == 0 {
 		return comment.Text
 	}
 
-	lines[opener] = lines[opener][:at] + strings.Repeat(" ", len(name)) + lines[opener][at+len(name):]
+	// The first name documents the declaration directly beneath, which is the
+	// check a single-name opener already answers. Masking nothing when it fails
+	// keeps a misspelled opener reporting.
+	if !declares(source, comment, names[0]) {
+		return comment.Text
+	}
+
+	// Every later name in the run is a sibling of that declaration rather than
+	// the declaration itself, so it is read from the block below instead of
+	// from one line. A name missing there stays prose and still reports.
+	block := declarationBlock(source, comment, len(names)+blockSlack)
+
+	for i, name := range names {
+		if i > 0 && !namedInAny(block, name) {
+			continue
+		}
+
+		lines[opener] = mask(lines[opener], indent+offsets[i], len(name))
+	}
+
 	return strings.Join(lines, "\n")
+}
+
+// blockSlack is how many lines beyond the run's own length the block may carry,
+// covering the braces and blank lines a declaration puts between its names.
+const blockSlack = 4
+
+// mask blanks a span of a line, leaving its length unchanged so every offset
+// taken before it still lands.
+func mask(line string, at, width int) string {
+	return line[:at] + strings.Repeat(" ", width) + line[at+width:]
+}
+
+// runNames splits an opening run into its names, with each name's own offset
+// inside the run. A run holding an empty part is not a run of names.
+func runNames(run string) ([]string, []int) {
+	var (
+		names   []string
+		offsets []int
+		at      int
+	)
+
+	for _, part := range strings.Split(run, "/") {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			return nil, nil
+		}
+
+		names = append(names, name)
+		offsets = append(offsets, at+strings.Index(part, name))
+		at += len(part) + 1
+	}
+
+	return names, offsets
+}
+
+// declarationBlock reads the lines a declaration occupies below a comment,
+// skipping blanks and comments, and stopping once it holds limit of them.
+func declarationBlock(source []string, comment code.Comment, limit int) []string {
+	below := commentEnd(comment)
+
+	var block []string
+	for i := below; i < len(source) && len(block) < limit; i++ {
+		line := strings.TrimSpace(source[i])
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") ||
+			strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		block = append(block, line)
+	}
+
+	return block
+}
+
+// namedInAny reports whether any line of a block names the given word.
+func namedInAny(block []string, name string) bool {
+	for _, line := range block {
+		if namedIn(line, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // declares reports whether the source below a comment names the given word. It
 // reads the first line that is neither blank nor a comment of its own, which is
 // where a declaration sits in every language carrying this convention.
 func declares(source []string, comment code.Comment, name string) bool {
-	// The comment's own last line, indexed from zero, is the line before the
-	// one to read. A trailing newline adds no line, so it is trimmed first.
-	below := comment.Line - 1 + strings.Count(strings.TrimRight(comment.Source, "\n"), "\n") + 1
+	below := commentEnd(comment)
 
 	for i := below; i < len(source) && i < below+4; i++ {
 		line := strings.TrimSpace(source[i])
@@ -159,6 +249,13 @@ func declares(source []string, comment code.Comment, name string) bool {
 		return namedIn(line, name)
 	}
 	return false
+}
+
+// commentEnd is the first source line below a comment, indexed from zero. The
+// comment's own last line is the line before it, and a trailing newline adds no
+// line, so it is trimmed first.
+func commentEnd(comment code.Comment) int {
+	return comment.Line - 1 + strings.Count(strings.TrimRight(comment.Source, "\n"), "\n") + 1
 }
 
 // namedIn reports whether a line carries the name as a whole word rather than
