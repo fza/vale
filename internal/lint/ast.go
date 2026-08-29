@@ -91,6 +91,16 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 	for {
 		tokt, tok, txt := walker.walk()
 
+		// A directive written as a tag reaches the same toggle an HTML comment
+		// does, so one spelling serves markup and source alike. It is consumed
+		// before any element bookkeeping, because it names no real element.
+		if txt == "vale" && (tokt == html.StartTagToken || tokt == html.EndTagToken) {
+			if directive, ok := core.NormalizeDirective(walker.raw()); ok {
+				f.UpdateComments(directive)
+				continue
+			}
+		}
+
 		walker.addCls(txt, tokt == html.StartTagToken)
 		closed := walker.canClose()
 

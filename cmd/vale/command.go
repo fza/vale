@@ -90,6 +90,15 @@ var commands = map[string]command{
 			"each entry into the StylesPath. Run this after adding a package,\n" +
 			"and in CI before linting.",
 	},
+	"cache-clean": {
+		Run:     cleanCache,
+		Summary: "Remove every cached result.",
+		Usage:   "cache-clean",
+		Detail: "Vale reuses the alerts of a file that has not changed since it\n" +
+			"last saw it. Entries are addressed by the file's content and by\n" +
+			"the configuration, so a change to either is picked up on its own;\n" +
+			"this is for reclaiming the space, or for starting over.",
+	},
 	"test": {
 		Run:     runTests,
 		Summary: "Run the test cases kept beside a configuration's rules.",

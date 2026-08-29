@@ -361,29 +361,36 @@ func (mgr *Manager) loadDefaultRules() error {
 		}
 	}
 
-	repetition := defaultRules["Repetition"]
-	if level, ok := mgr.Config.RuleToLevel["Vale.Repetition"]; ok {
-		repetition["level"] = level
-	}
-	repetition["path"] = "internal"
+	// The built-in rules answer to `Vale.Rule = NO` the same way a style's do,
+	// and building one is not free: `Vale.Spelling` reads a dictionary off
+	// disk, and `Vale.Terms` compiles a pattern holding the whole vocabulary.
+	if mgr.enabledSomewhere("Vale.Repetition") {
+		repetition := defaultRules["Repetition"]
+		if level, ok := mgr.Config.RuleToLevel["Vale.Repetition"]; ok {
+			repetition["level"] = level
+		}
+		repetition["path"] = "internal"
 
-	rule, err := buildRule(mgr.Config, repetition)
-	if err != nil {
-		return err
+		rule, err := buildRule(mgr.Config, repetition)
+		if err != nil {
+			return err
+		}
+		mgr.rules["Vale.Repetition"] = rule
 	}
-	mgr.rules["Vale.Repetition"] = rule
 
-	spelling := defaultRules["Spelling"]
-	if level, ok := mgr.Config.RuleToLevel["Vale.Spelling"]; ok {
-		spelling["level"] = level
-	}
-	spelling["path"] = "internal"
+	if mgr.enabledSomewhere("Vale.Spelling") {
+		spelling := defaultRules["Spelling"]
+		if level, ok := mgr.Config.RuleToLevel["Vale.Spelling"]; ok {
+			spelling["level"] = level
+		}
+		spelling["path"] = "internal"
 
-	rule, err = buildRule(mgr.Config, spelling)
-	if err != nil {
-		return err
+		rule, err := buildRule(mgr.Config, spelling)
+		if err != nil {
+			return err
+		}
+		mgr.rules["Vale.Spelling"] = rule
 	}
-	mgr.rules["Vale.Spelling"] = rule
 
 	// TODO: where should this go?
 	mgr.loadVocabRules()
@@ -423,11 +430,30 @@ func (mgr *Manager) loadStyles(styles []string) error {
 	return nil
 }
 
+// vocabSpellings maps each token a vocabulary accepts onto every spelling it
+// carries, joined as an alternation. A vocabulary lists what a project accepts,
+// so a token spelled more than one way keeps each spelling rather than whichever
+// line came last. The value is matched as a pattern, so an alternation accepts
+// every listed spelling and reports none of them.
+func vocabSpellings(tokens []string) map[string]string {
+	swap := make(map[string]string, len(tokens))
+	for _, term := range tokens {
+		key := strings.ToLower(term)
+		if seen, ok := swap[key]; ok && seen != term {
+			swap[key] = seen + "|" + term
+			continue
+		}
+		swap[key] = term
+	}
+	return swap
+}
+
 func (mgr *Manager) loadVocabRules() {
-	if len(mgr.Config.AcceptedTokens) > 0 {
+	if len(mgr.Config.AcceptedTokens) > 0 && mgr.enabledSomewhere("Vale.Terms") {
 		vocab := defaultRules["Terms"]
-		for _, term := range mgr.Config.AcceptedTokens {
-			vocab["swap"].(map[string]string)[strings.ToLower(term)] = term
+		swap := vocab["swap"].(map[string]string)
+		for key, term := range vocabSpellings(mgr.Config.AcceptedTokens) {
+			swap[key] = term
 		}
 		if level, ok := mgr.Config.RuleToLevel["Vale.Terms"]; ok {
 			vocab["level"] = level
@@ -436,7 +462,7 @@ func (mgr *Manager) loadVocabRules() {
 		mgr.rules["Vale.Terms"] = rule
 	}
 
-	if len(mgr.Config.RejectedTokens) > 0 {
+	if len(mgr.Config.RejectedTokens) > 0 && mgr.enabledSomewhere("Vale.Avoid") {
 		avoid := defaultRules["Avoid"]
 		for _, term := range mgr.Config.RejectedTokens {
 			avoid["tokens"] = append(avoid["tokens"].([]string), term)

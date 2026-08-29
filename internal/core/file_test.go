@@ -106,3 +106,38 @@ func TestNewFileGlobalLangFallback(t *testing.T) {
 		t.Fatalf("expected global Lang fallback %q, got %q", "ja", f.NLP.Lang)
 	}
 }
+
+func TestNormalizeDirective(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+		tag  bool
+	}{
+		{"opens a region", "<vale off>", "vale off", true},
+		{"closes a region", "</vale off>", "vale on", true},
+		{"opens the inverse region", "<vale on>", "vale on", true},
+		{"closes the inverse region", "</vale on>", "vale off", true},
+		{"disables one rule", "<vale House.Passive = NO>", "vale House.Passive = NO", true},
+		{"restores one rule", "</vale House.Passive>", "vale House.Passive = YES", true},
+		{"keeps a rule name's case", "</vale MyStyle.MyRule>", "vale MyStyle.MyRule = YES", true},
+		{"restores an explicit assignment", "</vale House.Passive = NO>", "vale House.Passive = NO", true},
+		{"tolerates padding", "<vale   off >", "vale off", true},
+		{"leaves the bare form alone", "vale off", "vale off", false},
+		{"leaves other markup alone", "<div>", "<div>", false},
+		{"leaves a word alone", "vale", "vale", false},
+		{"needs a body", "<vale>", "<vale>", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, tag := NormalizeDirective(tt.in)
+			if got != tt.want || tag != tt.tag {
+				t.Errorf("got %q, %v; want %q, %v", got, tag, tt.want, tt.tag)
+			}
+			if tt.tag && !IsCommentControl(got) {
+				t.Error("a normalized directive should read as one")
+			}
+		})
+	}
+}

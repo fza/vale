@@ -116,3 +116,64 @@ func TestRuleEnabledWithoutBaseStyles(t *testing.T) {
 		t.Error("naming one rule must not pull in the rest of its style")
 	}
 }
+
+// The built-in rules answer to `= NO` the same way a style's do. Skipping one
+// avoids real work: `Vale.Spelling` reads a dictionary, `Vale.Terms` compiles
+// the whole vocabulary into one pattern.
+func TestDisabledBuiltinRuleIsNotCompiled(t *testing.T) {
+	rules := enabledTestManager(t, func(cfg *core.Config) {
+		cfg.SBaseStyles["*.md"] = []string{"Vale"}
+		cfg.SChecks["*.md"] = map[string]bool{"Vale.Spelling": false}
+	})
+
+	if hasRule(rules, "Vale.Spelling") {
+		t.Error("a built-in rule disabled in every section must not be compiled")
+	}
+	if !hasRule(rules, "Vale.Repetition") {
+		t.Error("a built-in rule nothing disables must still load")
+	}
+}
+
+func TestEnabledBuiltinRulesAreCompiled(t *testing.T) {
+	rules := enabledTestManager(t, func(cfg *core.Config) {
+		cfg.SBaseStyles["*.md"] = []string{"Vale"}
+	})
+
+	for _, name := range []string{"Vale.Spelling", "Vale.Repetition"} {
+		if !hasRule(rules, name) {
+			t.Errorf("%s must load when nothing disables it", name)
+		}
+	}
+}
+
+// The vocabulary rules are built from the vocabulary rather than from a file,
+// and are gated the same way.
+func TestDisabledVocabRuleIsNotCompiled(t *testing.T) {
+	withVocab := func(disable bool) map[string]Rule {
+		return enabledTestManager(t, func(cfg *core.Config) {
+			cfg.SBaseStyles["*.md"] = []string{"Vale"}
+			cfg.AcceptedTokens = []string{"Kubernetes"}
+			cfg.RejectedTokens = []string{"kubernets"}
+			if disable {
+				cfg.SChecks["*.md"] = map[string]bool{
+					"Vale.Terms": false,
+					"Vale.Avoid": false,
+				}
+			}
+		})
+	}
+
+	rules := withVocab(false)
+	for _, name := range []string{"Vale.Terms", "Vale.Avoid"} {
+		if !hasRule(rules, name) {
+			t.Errorf("%s must load when nothing disables it", name)
+		}
+	}
+
+	rules = withVocab(true)
+	for _, name := range []string{"Vale.Terms", "Vale.Avoid"} {
+		if hasRule(rules, name) {
+			t.Errorf("%s must not be compiled when every section disables it", name)
+		}
+	}
+}

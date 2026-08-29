@@ -86,6 +86,14 @@ func addExceptions(s *Spelling, generic baseCheck, cfg *core.Config) error { //n
 			term = `\b` + term + `\b`
 		}
 		s.Exceptions = append(s.Exceptions, term)
+	}
+
+	// Compiled once, after the whole vocabulary is collected. Compiling inside
+	// the loop rebuilt the alternation from every term gathered so far, making
+	// the cost quadratic in the size of the vocabulary and throwing away all
+	// but the last result: a 1,000-term vocabulary spent over three seconds
+	// here before a single file was read.
+	if len(s.Exceptions) > 0 {
 		s.exceptRe = rx.MustCompile(
 			ignoreCase + strings.Join(s.Exceptions, "|"))
 	}

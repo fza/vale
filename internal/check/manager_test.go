@@ -1,6 +1,7 @@
 package check
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -85,5 +86,23 @@ func TestFormatMessage(t *testing.T) {
 		if s != tt.out {
 			t.Errorf("(%q, %v) => %q != %q", tt.in, tt.args, s, tt.out)
 		}
+	}
+}
+
+// A vocabulary lists the spellings a project accepts. Keying by the lowercase
+// form alone kept only the last line, so a token spelled two ways reported one
+// of its own accepted spellings as a defect.
+func TestVocabSpellings(t *testing.T) {
+	got := vocabSpellings([]string{"mariadb", "MariaDB", "Kubernetes"})
+
+	both := got["mariadb"]
+	if !strings.Contains(both, "mariadb") || !strings.Contains(both, "MariaDB") {
+		t.Errorf("a token spelled two ways should carry both spellings, got %q", both)
+	}
+	if one := got["kubernetes"]; one != "Kubernetes" {
+		t.Errorf("a token spelled one way should carry that spelling alone, got %q", one)
+	}
+	if len(got) != 2 {
+		t.Errorf("two spellings of one token should share one entry, got %d", len(got))
 	}
 }
