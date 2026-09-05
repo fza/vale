@@ -36,8 +36,16 @@ func (l *Linter) lintCode(f *core.File) error {
 		return l.lintCodeOld(f)
 	}
 
-	if found := updateQueries(f, l.Manager.Config); len(found) > 0 {
+	switch found := updateQueries(f, l.Manager.Config); {
+	// A view supplying its own queries says what to extract in full, so
+	// nothing is added on top of one.
+	case len(found) > 0:
 		lang.Queries = found
+	// A string literal is extracted only where a rule asks for it: the family
+	// sits outside `text`, so a style naming it nowhere can make no use of
+	// one, and a file keeps costing what it did.
+	case l.Manager.HasScope(core.LiteralScope):
+		code.WithLiterals(lang)
 	}
 
 	comments, err := code.GetComments([]byte(f.Content), lang)
