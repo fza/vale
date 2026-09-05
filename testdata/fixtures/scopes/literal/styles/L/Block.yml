@@ -1,0 +1,7 @@
+extends: existence
+message: "'%s' in a raw literal"
+level: error
+nonword: true
+scope: literal.block
+raw:
+  - 'ZQX'

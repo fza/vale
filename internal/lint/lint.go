@@ -408,7 +408,7 @@ func (l *Linter) lintTxt(f *core.File) error {
 }
 
 func (l *Linter) lintLines(f *core.File) error {
-	block := nlp.NewBlock("", f.Content, "text"+f.MetaScope+f.RealExt)
+	block := nlp.NewBlock("", f.Content, blockScope(f))
 	return l.lintBlock(f, block, len(f.Lines), 0, true)
 }
 

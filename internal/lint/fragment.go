@@ -107,6 +107,14 @@ func (l *Linter) lintFragments(f *core.File) error {
 			continue
 		}
 
+		// This path reads a comment as the markup document it is, rebuilding
+		// a scope -- `text.paragraph` -- from the top. A string literal is
+		// not a document, and rebuilding one that way would put it back
+		// under `text`, where every rule already written would match it.
+		if code.IsLiteral(comment.Scope) {
+			continue
+		}
+
 		f.SetMetaScope(comment.Scope)
 		if l.skipsComment(comment.Scope) {
 			continue
