@@ -22,6 +22,20 @@ var reservedScopes = map[string]bool{
 	"table": true, "text": true, "quote": true,
 }
 
+// LiteralScope is the family a string literal is reported under, and the name
+// a rule writes to opt into one: `scope: literal`, or `literal.line` for the
+// single-line strings a flag's help text and an error's message are.
+//
+// It sits outside `text` deliberately. A rule that does not name it cannot
+// match a literal, so adding one to a style changes nothing for every rule
+// already in it.
+const LiteralScope = "literal"
+
+// IsLiteral reports whether a scope names the string-literal family.
+func IsLiteral(scope string) bool {
+	return scope == LiteralScope || strings.HasPrefix(scope, LiteralScope+".")
+}
+
 var scopeName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 // LoadScopes reads every named scope on the search paths into c.Scopes.

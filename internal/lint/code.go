@@ -36,8 +36,25 @@ func updateQueries(f *core.File, cfg *core.Config) []core.Scope {
 // your comments must not also cost you the ability to exclude one. See #858.
 func (l *Linter) skipsComment(scope string) bool {
 	ignored := l.Manager.Config.IgnoredScopes
-	return core.StringInSlice("comment", ignored) ||
-		core.StringInSlice(scope, ignored)
+	if core.StringInSlice(scope, ignored) {
+		return true
+	}
+	// `comment` names every comment, and a string literal is not one.
+	return !core.IsLiteral(scope) && core.StringInSlice("comment", ignored)
+}
+
+// blockScope is the scope a block of text extracted from a file carries.
+//
+// Everything extracted is prose and belongs to `text`, with one exception. A
+// string literal is code that happens to hold words, so it forms a family of
+// its own and a rule reaches it only by naming `literal`. Under `text` every
+// rule already written would match one, and a source file's literals are
+// mostly paths, wire values and map keys.
+func blockScope(f *core.File) string {
+	if bare := strings.TrimPrefix(f.MetaScope, "."); core.IsLiteral(bare) {
+		return bare + f.RealExt
+	}
+	return "text" + f.MetaScope + f.RealExt
 }
 
 // maskURLs blanks the URLs in a comment: a URL is never prose, and in
