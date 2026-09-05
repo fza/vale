@@ -37,8 +37,25 @@ func updateQueries(f *core.File, cfg *core.Config) []core.Scope {
 // your comments must not also cost you the ability to exclude one. See #858.
 func (l *Linter) skipsComment(scope string) bool {
 	ignored := l.Manager.Config.IgnoredScopes
-	return core.StringInSlice("comment", ignored) ||
-		core.StringInSlice(scope, ignored)
+	if core.StringInSlice(scope, ignored) {
+		return true
+	}
+	// `comment` names every comment, and a string literal is not one.
+	return !code.IsLiteral(scope) && core.StringInSlice("comment", ignored)
+}
+
+// blockScope is the scope a block of text extracted from a file carries.
+//
+// Everything extracted is prose and belongs to `text`, with one exception. A
+// string literal is code that happens to hold words, so it forms a family of
+// its own and a rule reaches it only by naming `literal`. Under `text` every
+// rule already written would match one, and a source file's literals are
+// mostly paths, wire values and map keys.
+func blockScope(f *core.File) string {
+	if bare := strings.TrimPrefix(f.MetaScope, "."); code.IsLiteral(bare) {
+		return bare + f.RealExt
+	}
+	return "text" + f.MetaScope + f.RealExt
 }
 
 // languageFor returns the tree-sitter grammar for a file. When the file's own
@@ -63,8 +80,16 @@ func (l *Linter) lintCode(f *core.File) error {
 		return l.lintCodeOld(f)
 	}
 
-	if found := updateQueries(f, l.Manager.Config); len(found) > 0 {
+	switch found := updateQueries(f, l.Manager.Config); {
+	// A view supplying its own queries says what to extract in full, so
+	// nothing is added on top of one.
+	case len(found) > 0:
 		lang.Queries = found
+	// A string literal is extracted only where a rule asks for it: the family
+	// sits outside `text`, so a style naming it nowhere can make no use of
+	// one, and a file keeps costing what it did.
+	case l.Manager.HasScope(code.LiteralScope):
+		code.WithLiterals(lang)
 	}
 
 	comments, err := code.GetComments([]byte(f.Content), lang)

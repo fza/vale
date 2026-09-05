@@ -166,6 +166,28 @@ func coalesce(comments []Comment) []Comment {
 	return joined
 }
 
+// LiteralScope is the family a string literal is reported under, and the name
+// a rule writes to opt into one: `scope: literal`, or `literal.line` for the
+// single-line strings a flag's help text and an error's message are.
+//
+// It sits outside `text` deliberately. A rule that does not name it cannot
+// match a literal, so adding one to a style changes nothing for every rule
+// already in it.
+const LiteralScope = "literal"
+
+// IsLiteral reports whether a scope names the string-literal family.
+func IsLiteral(scope string) bool {
+	return scope == LiteralScope || strings.HasPrefix(scope, LiteralScope+".")
+}
+
+// WithLiterals adds a language's string-literal queries to the ones it runs.
+//
+// Extraction is additive rather than filtered, so a caller that never asks
+// pays nothing: the tree is walked for comments exactly as it was.
+func WithLiterals(lang *Language) {
+	lang.Queries = append(lang.Queries, lang.Literals...)
+}
+
 // GetComments returns all comments in the given source code.
 func GetComments(source []byte, lang *Language) ([]Comment, error) {
 	var comments []Comment
@@ -193,6 +215,7 @@ func GetComments(source []byte, lang *Language) ([]Comment, error) {
 		})
 	}
 
+	comments, literals := splitLiterals(comments)
 	joined := coalesce(dropDirectives(dropShebang(comments), lang))
 	for i, c := range joined {
 		if lang.Doc != nil {
@@ -202,6 +225,18 @@ func GetComments(source []byte, lang *Language) ([]Comment, error) {
 			joined[i].Masks = append(joined[i].Masks, m)
 		}
 	}
+	if len(literals) == 0 {
+		return joined, nil
+	}
+
+	// A literal is never merged into the run of line comments above it, is
+	// no directive, and carries no documentation convention, so every pass
+	// above is given the comments alone and the literals are put back in
+	// source order after.
+	joined = append(joined, literals...)
+	sort.SliceStable(joined, func(p, q int) bool {
+		return joined[p].Line < joined[q].Line
+	})
 
 	return joined, nil
 }
@@ -243,6 +278,22 @@ func dropDirectives(comments []Comment, lang *Language) []Comment {
 		}
 	}
 	return kept
+}
+
+// splitLiterals separates the string literals from the comments.
+func splitLiterals(comments []Comment) ([]Comment, []Comment) {
+	var literals []Comment
+
+	kept := comments[:0]
+	for _, comment := range comments {
+		if IsLiteral(comment.Scope) {
+			literals = append(literals, comment)
+			continue
+		}
+		kept = append(kept, comment)
+	}
+
+	return kept, literals
 }
 
 // dropShebang removes a leading `#!` line.

@@ -1,0 +1,6 @@
+extends: existence
+message: "'%s' in prose"
+level: error
+nonword: true
+raw:
+  - 'ZQX'

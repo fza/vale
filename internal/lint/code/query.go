@@ -77,6 +77,15 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 			// else -- `comment`, `docstring` -- carries its delimiters.
 			prose := name == "prose"
 
+			// A capture named `literal` is a string the program itself
+			// carries: a flag's help text, an error's message. It is quoted
+			// rather than delimited, and it belongs to a family of its own
+			// so that a rule written for prose cannot reach it.
+			literal := name == LiteralScope
+			if literal && qe.lang.SkipLiteral != nil && qe.lang.SkipLiteral(c.Node) {
+				continue
+			}
+
 			rText := c.Node.Content(source)
 			row := int(c.Node.StartPoint().Row)
 			offset := int(c.Node.StartPoint().Column)
@@ -96,10 +105,17 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 				rText = trimmed
 			}
 
-			// opener is what stripDelims takes off the front: the first
-			// line's Text begins that far into its Source.
+			// opener is what comes off the front: the first line's Text
+			// begins that far into its Source. A literal loses its opening
+			// quote, a comment whatever stripDelims takes, and bare prose
+			// nothing.
 			cText, opener := rText, 0
-			if !prose {
+			switch {
+			case literal:
+				cText = trimQuotes(rText)
+				opener = (len(rText) - len(cText)) / 2
+			case prose:
+			default:
 				cText = qe.stripDelims(rText)
 				opener = qe.openerLen(rText)
 			}
@@ -109,18 +125,26 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 			// putting it back in Source means adding this, and nothing else.
 			strip := []int{opener}
 
-			scope := "text.comment" + meta + ".line"
+			// A literal is code that happens to hold words, so it forms its
+			// own family. Under `text` every rule already written would match
+			// one, which is every path, wire value and map key in the file.
+			family := "text.comment"
+			if literal {
+				family = LiteralScope
+			}
+
+			scope := family + meta + ".line"
 			// A trailing newline is part of some grammars' tokens; only a
 			// newline between content makes a comment a block.
 			if strings.Count(strings.TrimRight(cText, "\n"), "\n") > 0 {
-				scope = "text.comment" + meta + ".block"
+				scope = family + meta + ".block"
 
 				// Blank the per-line decoration before measuring indentation,
 				// so ` * text` is dedented as three spaces rather than read as
 				// a Markdown list item. Blanking keeps the width, so nothing
 				// has moved yet; the dedent below takes it off and records how
 				// much.
-				if !prose {
+				if !prose && !literal {
 					cText = qe.blankPrefixes(cText)
 				}
 
@@ -287,4 +311,26 @@ func stripIndent(line string, n int, cutset string) string {
 		cut = n
 	}
 	return line[cut:]
+}
+
+// trimQuotes takes the quoting off a string literal, leaving its content.
+//
+// The quote cannot go in a language's Delims: a quote written inside a comment
+// is content, and a pattern wide enough to strip a literal's would strip that
+// too. A literal's own node has the quote at each edge and nowhere else, so it
+// comes off here.
+func trimQuotes(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+
+	open := s[0]
+	if open != '"' && open != '`' && open != '\'' {
+		return s
+	}
+	if s[len(s)-1] != open {
+		return s
+	}
+
+	return s[1 : len(s)-1]
 }
