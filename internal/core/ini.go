@@ -733,49 +733,65 @@ func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 
 	// Syntax-specific settings
 	for _, sec := range uCfg.SectionStrings() {
-		if StringInSlice(sec, []string{"*", "DEFAULT", "formats", "asciidoctor", "sphinx"}) {
+		if StringInSlice(sec, reservedSections) {
 			continue
 		}
-
-		// `[*.md if .Meta.draft]` applies to the files its glob matches for
-		// which its condition holds.
-		g, cond := SplitSection(sec)
-		pat, err := glob.Compile(g)
-		if err != nil {
+		if err := processSection(uCfg, sec, sec, cfg, dry); err != nil {
 			return nil, err
 		}
-		cfg.SecToPat[sec] = pat
-		if cond != "" {
-			c, cErr := NewCondition(cond)
-			if cErr != nil {
-				return nil, NewE201FromTarget(fmt.Sprintf("[%s]: %s", sec, cErr), sec, cfg.RootINI)
-			}
-			cfg.SecToCond[sec] = c
-		}
-
-		syntaxMap := make(map[string]bool)
-		levelMap := make(map[string]string)
-		for _, k := range uCfg.Section(sec).KeyStrings() {
-			if f, found := syntaxOpts[k]; found {
-				if err = f(sec, uCfg.Section(sec), cfg); err != nil && !dry {
-					return nil, err
-				}
-			} else if _, option := coreOpts[k]; option {
-				return nil, NewE201FromTarget(fmt.Sprintf(coreError, k), k, cfg.RootINI)
-			} else if isParam, pErr := asRuleParam(k, lastValue(uCfg.Section(sec).Key(k)), cfg); pErr != nil {
-				return nil, pErr
-			} else if lastValue(uCfg.Section(sec).Key(k)) == unsetValue {
-				cfg.SUnsets[sec] = append(cfg.SUnsets[sec], k)
-				cfg.Checks = append(cfg.Checks, k)
-			} else if !isParam {
-				syntaxMap[k] = validateLevel(k, lastValue(uCfg.Section(sec).Key(k)), levelMap)
-				cfg.Checks = append(cfg.Checks, k)
-			}
-		}
-		cfg.RuleKeys = append(cfg.RuleKeys, sec)
-		cfg.SChecks[sec] = syntaxMap
-		cfg.SLevels[sec] = levelMap
 	}
 
 	return uCfg, nil
+}
+
+// reservedSections are the section names that carry something other than a
+// file-matching pattern.
+var reservedSections = []string{"*", "DEFAULT", "formats", "asciidoctor", "sphinx"}
+
+// processSection reads one glob section and registers it under label.
+//
+// The label is the pattern a file is matched against, which is the section's
+// own name in a root configuration and an anchored form of it in a nested one.
+func processSection(uCfg *ini.File, sec, label string, cfg *Config, dry bool) error {
+	// `[*.md if .Meta.draft]` applies to the files its glob matches for
+	// which its condition holds.
+	g, cond := SplitSection(label)
+	pat, err := glob.Compile(g)
+	if err != nil {
+		return err
+	}
+	cfg.SecToPat[label] = pat
+	if cond != "" {
+		c, cErr := NewCondition(cond)
+		if cErr != nil {
+			return NewE201FromTarget(fmt.Sprintf("[%s]: %s", sec, cErr), sec, cfg.RootINI)
+		}
+		cfg.SecToCond[label] = c
+	}
+
+	syntaxMap := make(map[string]bool)
+	levelMap := make(map[string]string)
+	for _, k := range uCfg.Section(sec).KeyStrings() {
+		if f, found := syntaxOpts[k]; found {
+			if err = f(label, uCfg.Section(sec), cfg); err != nil && !dry {
+				return err
+			}
+		} else if _, option := coreOpts[k]; option {
+			return NewE201FromTarget(fmt.Sprintf(coreError, k), k, cfg.RootINI)
+		} else if isParam, pErr := asRuleParam(k, lastValue(uCfg.Section(sec).Key(k)), cfg); pErr != nil {
+			return pErr
+		} else if lastValue(uCfg.Section(sec).Key(k)) == unsetValue {
+			cfg.SUnsets[label] = append(cfg.SUnsets[label], k)
+			cfg.Checks = append(cfg.Checks, k)
+		} else if !isParam {
+			syntaxMap[k] = validateLevel(k, lastValue(uCfg.Section(sec).Key(k)), levelMap)
+			cfg.Checks = append(cfg.Checks, k)
+		}
+	}
+
+	cfg.RuleKeys = append(cfg.RuleKeys, label)
+	cfg.SChecks[label] = syntaxMap
+	cfg.SLevels[label] = levelMap
+
+	return nil
 }

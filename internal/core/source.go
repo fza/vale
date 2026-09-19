@@ -28,13 +28,16 @@ const (
 // A `dry` run means that we can't expect the `StylesPath` to fully formed yet.
 // For example, some assets may not have been downloaded yet via the `sync`
 // command.
-func ReadPipeline(flags *CLIFlags, dry bool) (*Config, error) {
+func ReadPipeline(flags *CLIFlags, dry bool, inputs ...string) (*Config, error) {
 	config, err := NewConfig(flags)
 	if err != nil {
 		return config, err
 	} else if err = validateFlags(config); err != nil {
 		return config, err
 	}
+
+	// Taken before the package pipeline below, which names sources of its own.
+	nested := wantsNested(flags)
 
 	_, err = FromFile(config, dry)
 	if err != nil {
@@ -55,7 +58,33 @@ func ReadPipeline(flags *CLIFlags, dry bool) (*Config, error) {
 		}
 	}
 
+	// Read last, so that a deeper directory's sections are registered after a
+	// shallower one's and win the files they both match.
+	if nested && config.RootINI != "" {
+		root, absErr := filepath.Abs(config.RootINI)
+		if absErr != nil {
+			return config, absErr
+		}
+		if err = loadNested(config, discoverNested(root, inputs), dry); err != nil {
+			return config, err
+		}
+	}
+
 	return config, nil
+}
+
+// wantsNested reports whether a run reads configuration from the directories
+// it lints.
+//
+// A configuration named explicitly means that file rather than a search, and
+// keeps that meaning whole: a run pinned to one file reports the same whatever
+// a checkout holds.
+func wantsNested(flags *CLIFlags) bool {
+	if flags.NoNested || flags.Path != "" || flags.Sources != "" {
+		return false
+	}
+	_, named := os.LookupEnv("VALE_CONFIG_PATH")
+	return !named
 }
 
 // from updates an existing configuration with values From a user-provided
