@@ -20,6 +20,8 @@ consumer.
 | Surface | Kind | Meaning |
 |---|---|---|
 | `--no-cache` | CLI flag | Lint every file, ignoring any cached result. |
+| `--no-nested` | CLI flag | Read no `.vale.ini` from the directories being linted. |
+| `.vale.ini` in any directory | Configuration | Glob sections covering that directory and the tree beneath it. |
 | `cache-clean` | CLI command | Remove every cached result, reporting how much was reclaimed. |
 | `VALE_CACHE` | Environment variable | Where to store the alerts of unchanged files. |
 | `scope: literal` | Rule scope | Match a string literal. Also `literal.line` and `literal.block`. |
@@ -164,6 +166,41 @@ pays it: a raw string's later lines begin at the margin.
 - `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`, `code.WithLiterals` gated on `Manager.HasScope`.
 - `internal/lint/fragment.go` — a literal skipped on the markup path, which would rebuild it under `text`.
 - `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
+
+### A directory carries its own configuration
+
+A `.vale.ini` in any directory holds glob sections covering that directory and
+the tree beneath it, so a subtree states its own rules where it lives rather
+than through a path buried in the root file. Each nested file's sections are
+anchored to its own directory and appended in depth order, which makes them
+ordinary sections and leaves everything that reads a section untouched: one
+configuration, one `check.Manager`, one compile.
+
+A nested section replaces the style list exactly as a flat section does, while
+rule settings, levels and vocabularies accumulate -- the split Vale already
+draws within one file. `BasedOnStyles =` remains the hard reset it is.
+
+Discovery follows the paths a run is given and finishes before the rules
+compile, because a nested section's `BasedOnStyles` adds to the styles
+compilation loads. A file argument contributes every configuration between the
+root and itself; a directory argument is walked for its directories alone,
+skipping what a lint walk skips. Directory lookups are memoised, so a run given
+several thousand paths under one tree reads each directory once.
+
+A nested file carries glob sections and nothing else. Every key Vale reads
+outside a section decides a whole run, so a nested file holding one is refused
+by name rather than reaching past the directory it describes.
+
+`--config`, `VALE_CONFIG_PATH` and `--sources` read no nested file: naming a
+configuration means that file rather than a search, so a run pinned to one
+reports the same whatever a checkout holds.
+
+- `internal/core/nested.go` -- `NestedConfigName`, `discoverNested`, `walkDirs`, `anchorLabel`, `loadNested`, `IsDirPath`.
+- `internal/core/ini.go` -- `processSection`, `reservedSections`.
+- `internal/core/source.go` -- `ReadPipeline` taking the run's inputs, `wantsNested`.
+- `internal/core/config.go` -- `Config.NestedFiles`, `CLIFlags.NoNested`.
+- `internal/lint/cache.go` -- `--no-nested` in the salt; a nested file is a configuration file, so the file list already covers it.
+- `internal/core/nested_test.go`; `testdata/e2e/config.yaml` cases `nested-carves-out-a-subtree`, `nested-deeper-wins`, `nested-disabled`, `nested-rejects-a-run-wide-key`.
 
 ### A shell script is parsed as code
 
