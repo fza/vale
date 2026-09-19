@@ -45,10 +45,15 @@ rule matches as a pattern and therefore reports none of them.
 An accepted phrase is compiled into a pattern, so the literal spacing between
 its words decided what it matched. A writer who wrapped a line between the two
 words of an accepted phrase got the component word reported, which reads as a
-rule firing on correct text. The whitespace inside a phrase is rewritten as
-`\s+`, so the phrase means the same thing however it is spaced.
+rule firing on correct text. The whitespace inside a phrase matches any run of
+it, so the phrase means the same thing however it is spaced.
 
-- `internal/check/definition.go` — `loosenPhraseSpacing`, called from `buildPhraseRe`.
+Upstream carries this as `termPattern`, which also escapes the periods of a
+literal term and is applied to the exception list as well as to the phrase
+list. That is the wider fix, so it is the one in place; the fork keeps only its
+test.
+
+- `internal/check/definition.go` — `termPattern` (upstream).
 - `internal/check/existence_test.go` — `TestExceptionPhraseSpansAnyWhitespace`.
 
 ### A `vale` directive is honoured inside a source comment
@@ -162,7 +167,7 @@ cannot read, so a comment below one is captured exactly as a comment above it is
 A file matched by name has no extension of its own, so `CodeExt` supplies the
 normed one to whatever needs to name a language.
 
-- `internal/core/format.go` — `FormatByFilename`, consulted from `FormatFromExt`.
+- `internal/core/format.go` — `FormatByFilename`, consulted from `FormatFromExt` only where the configured `[formats]` mapping has nothing for the path, so a project naming such a file itself still decides what it is read as.
 - `internal/core/file.go` — `File.CodeExt`.
 - `internal/lint/code/mk.go`, `internal/lint/code/lang.go`.
 - `internal/lint/code.go` and `internal/lint/fragment.go` — `GetLanguageFromExt(f.CodeExt())` rather than `f.RealExt`.
@@ -182,7 +187,10 @@ interrupted write costs a re-lint and never a wrong result. Eviction is by last
 use — a read touches an entry's modification time at most hourly, and a sweep
 that runs at most daily deletes what has gone unused for five days.
 
-The salt covers the binary's version, the resolved configuration, the ini files
+The salt covers the running binary's own size and modification time — a
+development build reports no version, so the version alone cannot tell two of
+them apart and one would read what the other wrote — the binary's version, the
+resolved configuration, the ini files
 it was read from, the `--sources` files, `--ignore-syntax`, `--filter` and its
 body, and the styles path hashed as a tree. A change to any of it leaves the old
 entries unreachable rather than wrong. The key adds the file's path — the
@@ -204,6 +212,7 @@ and then done without.
 - `internal/lint/lint.go` — `Linter.cache`, and the lookup and store around `lintFile`.
 - `cmd/vale/cache.go`, `cmd/vale/command.go`, `cmd/vale/flag.go`, `cmd/vale/main.go`, `internal/core/config.go`.
 - `internal/cache/cache_test.go`, `internal/lint/cache_test.go`.
+- `internal/e2e/e2e_test.go` — every scenario runs with `--no-cache`, so a case reports what it was given rather than what an earlier build reported for the same fixture.
 
 ### Every input path goes through one worker pool
 
@@ -260,8 +269,22 @@ building one is not free: `Vale.Spelling` reads a dictionary off disk, and
 `Vale.Terms` compiles a pattern holding the whole vocabulary. Each is now gated
 on `enabledSomewhere`, as the style rules already were.
 
-- `internal/check/manager.go` — the gates in `loadDefaultRules` and `loadVocabRules`.
-- `internal/check/enabled_test.go` — `TestDisabledBuiltinRuleIsNotCompiled`, `TestEnabledBuiltinRulesAreCompiled`, `TestDisabledVocabRuleIsNotCompiled`.
+A rule built from a vocabulary that a section names is exempt. Such a rule is
+registered as globally off and switched on for that section's files alone, so
+the global setting it carries is a default rather than a disable, and reading it
+as one would skip a rule the run goes on to ask for.
+
+- `internal/check/manager.go` — the gates in `loadDefaultRules`, `addTerms` and `addAvoid`, and `sectionVocabRule` inside `enabledSomewhere`.
+- `internal/check/enabled_test.go` — `TestDisabledBuiltinRuleIsNotCompiled`, `TestEnabledBuiltinRulesAreCompiled`, `TestDisabledVocabRuleIsNotCompiled`, `TestSectionVocabRuleIsCompiled`.
+
+## Divergences from upstream's own fixtures
+
+One upstream expectation states a behaviour this fork deliberately replaces, so
+its test data says what this fork does.
+
+| Case | Upstream | This fork |
+|---|---|---|
+| `testdata/e2e/misc.yaml`, `vocab-multiple` | Two vocabularies spelling one token differently: the later one wins, and the earlier spelling is reported. | Both spellings are accepted, and neither is reported. |
 
 ## What proves it survives
 
