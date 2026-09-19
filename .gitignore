@@ -52,3 +52,6 @@ fixtures/formats/Sphinx/_build/
 
 # Fork-local notes, not part of the published tree.
 UPSTREAM-MERGE.md
+
+# Claude's own project memory, colocated with the code it describes.
+.memory/
