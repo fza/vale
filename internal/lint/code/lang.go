@@ -140,6 +140,8 @@ func languageFor(ext string) *Language {
 		return CSS()
 	case ".sh":
 		return Shell()
+	case ".mk":
+		return Makefile()
 	default:
 		return nil
 	}
