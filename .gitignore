@@ -49,3 +49,6 @@ fixtures/formats/Sphinx/_build/
 
 .github/styles/config/vocabularies/*
 !.github/styles/config/vocabularies/Vale
+
+# Fork-local notes, not part of the published tree.
+UPSTREAM-MERGE.md
