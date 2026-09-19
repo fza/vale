@@ -163,6 +163,7 @@ func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 	// how alerts are printed or feeds a field the marshalled configuration
 	// already carries, which TestEveryFlagIsClassified holds to.
 	fmt.Fprintf(h, "simple %t\n", cfg.Flags.Simple)
+	fmt.Fprintf(h, "nested %t\n", cfg.Flags.NoNested)
 	fmt.Fprintf(h, "filter %s\n", cfg.Flags.Filter)
 	if system.FileExists(cfg.Flags.Filter) {
 		body, readErr := os.ReadFile(cfg.Flags.Filter)

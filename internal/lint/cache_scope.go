@@ -38,7 +38,8 @@ type cacheScope struct {
 	// sources are the bodies of the files the configuration was read from.
 	// Resolution drops what it has no field for -- a section that names no
 	// styles, checks or levels leaves no trace of itself -- so the files
-	// answer for whatever the fields do not.
+	// answer for whatever the fields do not. A nested file is recorded as a
+	// configuration file, so the list covers it.
 	sources [][]byte
 
 	// patterns are what a file's path is matched against: section names and

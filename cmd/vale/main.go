@@ -166,7 +166,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	config, err := core.ReadPipeline(&Flags, false)
+	config, err := core.ReadPipeline(&Flags, false, args...)
 	if err != nil {
 		handleError(err)
 	}
