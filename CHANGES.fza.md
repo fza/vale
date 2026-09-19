@@ -70,6 +70,23 @@ reaches the file, so a directive carries into later comments.
 - `internal/core/file.go` — `IsCommentControl`.
 - `internal/lint/code_test.go`.
 
+### A setting reaches a rule group between a rule and its style
+
+A rule's name spans the subdirectories it sits under, and a style's own name may
+hold a dot, so `House.Literals.TwoWordVerb` belongs to the group
+`House.Literals` inside the style `House`. A setting was looked for under the
+rule's full name and then under the first segment alone, so a group key --
+`House.Literals = NO` for one section -- sat at neither end and was never found,
+and the group ran everywhere. Every ancestor prefix is now consulted, most
+specific first, wherever a rule's setting, level, base style or in-text region
+is resolved.
+
+- `internal/core/util.go` -- `SettingKeys`.
+- `internal/lint/lint.go` -- `lookup`, `lookupUnless`, `basedOn`.
+- `internal/check/manager.go` -- `checkSetting`.
+- `internal/core/file.go` -- `File.Level`, `File.RegionDisabled`.
+- `internal/core/util_test.go` -- `TestSettingKeys`; `testdata/e2e/config.yaml` case `style-group-disabled`.
+
 ## Features
 
 ### A directive written as a tag
@@ -291,3 +308,14 @@ its test data says what this fork does.
 The fork's own suite is necessary and not sufficient: it does not exercise the
 rules the consuming repository depends on. `UPSTREAM-MERGE.md` holds the build
 environment, the known conflicts and the consumer check that does.
+
+Against `format-d-fdbox` at v3.22.0, that check reports the same 20 suggestions
+over the same 3,951 files as the fork did before the merge, and five errors more.
+All five are upstream's own findings, reproduced by an unmodified `v3.22.0`
+binary at the same positions:
+
+- Three `Vale.Avoid` findings where a rejected phrase is wrapped across a line.
+  Upstream applies `termPattern` to a rejected term as well as to an accepted
+  one, so the phrase now matches whatever whitespace separates its words.
+- Two `Vale.Spelling` findings on `POSTs`. Upstream's rewritten spelling engine
+  no longer accepts an acronym's plural on its own.
