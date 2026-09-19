@@ -319,9 +319,10 @@ func TestSaltTracksWhatChangesTheAlerts(t *testing.T) {
 func TestEveryFlagIsClassified(t *testing.T) {
 	// Named in the salt, because they decide which alerts exist.
 	inSalt := map[string]bool{
-		"Simple":  true,
-		"Filter":  true,
-		"Sources": true,
+		"Simple":   true,
+		"Filter":   true,
+		"Sources":  true,
+		"NoNested": true,
 	}
 
 	// Left out, because they feed a field the marshalled configuration already

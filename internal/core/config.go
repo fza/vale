@@ -185,6 +185,7 @@ type CLIFlags struct {
 	Relative      bool
 	Remote        bool
 	NoCache       bool
+	NoNested      bool
 	Simple        bool
 	Sorted        bool
 	Wrap          bool
@@ -223,6 +224,7 @@ type Config struct {
 	RootINI           string                       // the path to the project's .vale.ini file
 	Paths             []string                     // A list of paths to search for styles
 	ConfigFiles       []string                     // A list of configuration files to load
+	NestedFiles       []string                     // Configuration files read from directories beneath the root
 
 	AcceptedTokens []string `json:"-"` // Project-specific vocabulary (okay)
 	RejectedTokens []string `json:"-"` // Project-specific vocabulary (avoid)
