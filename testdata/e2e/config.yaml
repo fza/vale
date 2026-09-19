@@ -530,3 +530,51 @@ cases:
       docs/page.md:1:5:Vale.Spelling:Did you really mean 'kubectl'?
       docs/page.md:1:30:Vale.Spelling:Did you really mean 'Quxelate'?
       docs/page.md:1:44:Vale.Spelling:Did you really mean 'quxelate'?
+
+  - name: style-group-disabled
+    about: "a setting given for a group between a rule and its style -- a style
+      name holding a dot, or a subdirectory under one -- turns that group off
+      for the section that names it, and leaves the rest of the style alone"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.go]
+        BasedOnStyles = House, House.Literals
+
+        [*_test.go]
+        House.Literals = NO
+      styles/House/Obvious.yml: |
+        extends: existence
+        message: "'%s' is not prose."
+        level: error
+        tokens:
+          - obviously
+      styles/House.Literals/Banned.yml: |
+        extends: existence
+        message: "'%s' is banned."
+        level: error
+        scope: literal
+        tokens:
+          - banana
+      a.go: |
+        package main
+
+        // This is obviously a comment.
+        func main() {
+                println("a banana here")
+        }
+      a_test.go: |
+        package main
+
+        // This is obviously a comment.
+        func main() {
+                println("a banana here")
+        }
+    args: a.go a_test.go
+    exit: 1
+    want: |
+      a.go:3:12:House.Obvious:'obviously' is not prose.
+      a.go:5:20:House.Literals.Banned:'banana' is banned.
+      a_test.go:3:12:House.Obvious:'obviously' is not prose.

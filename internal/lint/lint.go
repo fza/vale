@@ -640,8 +640,10 @@ func (l *Linter) runConcurrently(f *core.File, blk nlp.Block, rules []scopedRule
 // lookup reads a setting given for a rule, falling back to one given for the
 // style it belongs to.
 func lookup(settings map[string]bool, rule, style string) (bool, bool) {
-	if val, ok := settings[rule]; ok {
-		return val, true
+	for _, key := range core.SettingKeys(rule) {
+		if val, ok := settings[key]; ok {
+			return val, true
+		}
 	}
 	val, ok := settings[style]
 	return val, ok
@@ -649,8 +651,10 @@ func lookup(settings map[string]bool, rule, style string) (bool, bool) {
 
 // lookupUnless is lookup, skipping a key that is marked unset.
 func lookupUnless(settings, unset map[string]bool, rule, style string) (bool, bool) {
-	if val, ok := settings[rule]; ok && !unset[rule] {
-		return val, true
+	for _, key := range core.SettingKeys(rule) {
+		if val, ok := settings[key]; ok && !unset[key] {
+			return val, true
+		}
 	}
 	if val, ok := settings[style]; ok && !unset[style] {
 		return val, true
@@ -773,11 +777,24 @@ func (l *Linter) shouldRun(name string, f *core.File, chk check.Rule) bool {
 		run = true
 	}
 
-	if !run && !core.StringInSlice(style, f.BaseStyles) {
+	// A style is named in `BasedOnStyles` by its own name, which may hold a
+	// dot, so the rule answers to whichever of its prefixes the file is based
+	// on rather than to the first segment alone.
+	if !run && !basedOn(name, f.BaseStyles) {
 		return false
 	}
 
 	return true
+}
+
+// basedOn reports whether a file is based on the style a rule belongs to.
+func basedOn(name string, styles []string) bool {
+	for _, key := range core.SettingKeys(name) {
+		if core.StringInSlice(key, styles) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Linter) match(s string) bool {

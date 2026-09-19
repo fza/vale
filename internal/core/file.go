@@ -794,10 +794,7 @@ func (f *File) RegionDisabled(check, match string, line, col int) bool {
 		return false
 	}
 
-	keys := []string{"off", check}
-	if style := StyleName(check); style != check {
-		keys = append(keys, style)
-	}
+	keys := append([]string{"off"}, SettingKeys(check)...)
 	if match != "" {
 		keys = append(keys, check+"["+match+"]")
 	}
@@ -857,10 +854,10 @@ func (f *File) SetMetaScope(scope string) {
 // A rule's own level covers it; a level set for its style covers the rest of
 // that style, mirroring how the two are resolved at compile time.
 func (f *File) Level(name, compiled string) string {
-	if level, ok := f.Levels[name]; ok {
-		return level
-	} else if level, ok = f.Levels[StyleName(name)]; ok {
-		return level
+	for _, key := range SettingKeys(name) {
+		if level, ok := f.Levels[key]; ok {
+			return level
+		}
 	}
 	return compiled
 }

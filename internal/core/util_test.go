@@ -296,3 +296,29 @@ func TestFormatFromNameOrGlob(t *testing.T) {
 		}
 	}
 }
+
+// A setting may be given for a group between a rule and its style: a style
+// name may hold a dot, and a rule's name spans the subdirectories it sits
+// under.
+func TestSettingKeys(t *testing.T) {
+	cases := map[string][]string{
+		"House.Literals.TwoWordVerb": {"House.Literals.TwoWordVerb", "House.Literals", "House"},
+		"Std.dates.TimeFormat":       {"Std.dates.TimeFormat", "Std.dates", "Std"},
+		"Vale.Spelling":              {"Vale.Spelling", "Vale"},
+		"Solo":                       {"Solo"},
+	}
+
+	for name, want := range cases {
+		got := SettingKeys(name)
+		if len(got) != len(want) {
+			t.Errorf("SettingKeys(%q) = %v, want %v", name, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("SettingKeys(%q) = %v, want %v", name, got, want)
+				break
+			}
+		}
+	}
+}

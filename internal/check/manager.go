@@ -678,8 +678,10 @@ func (mgr *Manager) sectionVocabRule(name string) bool {
 // checkSetting reads a rule's setting, falling back to its style's -- the
 // precedence lint.lookup uses for the same question at lint time.
 func checkSetting(settings map[string]bool, rule, style string) (bool, bool) {
-	if val, ok := settings[rule]; ok {
-		return val, true
+	for _, key := range core.SettingKeys(rule) {
+		if val, ok := settings[key]; ok {
+			return val, true
+		}
 	}
 	val, ok := settings[style]
 	return val, ok
