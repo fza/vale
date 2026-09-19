@@ -93,6 +93,8 @@ func GetLanguageFromExt(ext string) (*Language, error) {
 		return CSS(), nil
 	case ".sh":
 		return Shell(), nil
+	case ".mk":
+		return Makefile(), nil
 	default:
 		return nil, fmt.Errorf("unsupported extension: '%s'", ext)
 	}

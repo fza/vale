@@ -82,7 +82,7 @@ func commentPadding(comment code.Comment, line int, source string, lang *code.La
 }
 
 func (l *Linter) lintFragments(f *core.File) error {
-	lang, err := code.GetLanguageFromExt(f.RealExt)
+	lang, err := code.GetLanguageFromExt(f.CodeExt())
 	if err != nil {
 		return err
 	}

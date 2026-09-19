@@ -459,6 +459,18 @@ func locFromByteOffset(ctx string, starts []int, begin, end, pad int) (int, []in
 }
 
 // SetText updates the file's content, lines, and history.
+// CodeExt is the extension that decides which language reads this file's
+// comments. It is the file's own where it has one, and the normed extension
+// otherwise: a build file is named rather than suffixed, so its own extension
+// is empty and names no language.
+func (f *File) CodeExt() string {
+	if f.RealExt != "" {
+		return f.RealExt
+	}
+
+	return f.NormedExt
+}
+
 func (f *File) SetText(s string) {
 	f.Content = s
 	f.Lines = strings.SplitAfter(s, "\n")
