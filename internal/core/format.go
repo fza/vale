@@ -60,6 +60,7 @@ var FormatByExtension = map[string][]string{
 	`\.(?:cpp|cc|c|cp|cxx|c\+\+|h|hpp|h\+\+)$`: {".cpp", "code"},
 	`\.(?:css)$`:                             {".css", "code"},
 	`\.(?:sh|bash|zsh|ksh)$`:                 {".sh", "code"},
+	`\.(?:mk|mak|make)$`:                     {".mk", "code"},
 	`\.(?:cs|csx)$`:                          {".cs", "code"},
 	`\.(?:dita)$`:                            {".dita", "markup"},
 	`\.(?:ex|exs)$`:                          {".ex", "code"},
@@ -101,11 +102,33 @@ var FormatByExtension = map[string][]string{
 
 // FormatFromExt takes a file extension and returns its [normExt, format]
 // list, if supported.
+// FormatByFilename associates a bare filename with its "normed" extension and
+// format, for a file that carries no extension of its own. A build file is
+// named rather than suffixed, so matching on the extension alone never reaches
+// one.
+var FormatByFilename = map[string][]string{
+	`^(?:[Mm]akefile|GNUmakefile)$`: {".mk", "code"},
+}
+
 func FormatFromExt(path string, mapping map[string]string) (string, string) {
 	base := strings.Trim(filepath.Ext(path), ".")
 	kind := getFormat("." + base)
 
-	if format, found := formatFor(path, mapping); found {
+	format, found := formatFor(path, mapping)
+	if !found && base == "" {
+		// A build file is named rather than suffixed, so matching on the
+		// extension alone never reaches one. The configured `[formats]`
+		// mapping is consulted first, so a project naming such a file itself
+		// still decides what it is read as.
+		name := filepath.Base(path)
+		for r, f := range FormatByFilename {
+			if m, _ := regexp.MatchString(r, name); m {
+				return f[0], f[1]
+			}
+		}
+	}
+
+	if found {
 		if kind == "code" && getFormat("."+format) == "markup" {
 			// NOTE: This is a special case of embedded markup within code.
 			return "." + format, "fragment"
