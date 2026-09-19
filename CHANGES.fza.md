@@ -307,15 +307,13 @@ its test data says what this fork does.
 
 The fork's own suite is necessary and not sufficient: it does not exercise the
 rules the consuming repository depends on. `UPSTREAM-MERGE.md` holds the build
-environment, the known conflicts and the consumer check that does.
+environment, the known conflicts, and the consumer check that does.
 
-Against `format-d-fdbox` at v3.22.0, that check reports the same 20 suggestions
-over the same 3,951 files as the fork did before the merge, and five errors more.
-All five are upstream's own findings, reproduced by an unmodified `v3.22.0`
-binary at the same positions:
+Two upstream behaviours differ at v3.22.0 from earlier releases, and a
+repository moving to it meets both as findings against prose that was clean
+before. Neither is a fork feature, and neither is a fault in the prose:
 
-- Three `Vale.Avoid` findings where a rejected phrase is wrapped across a line.
-  Upstream applies `termPattern` to a rejected term as well as to an accepted
-  one, so the phrase now matches whatever whitespace separates its words.
-- Two `Vale.Spelling` findings on `POSTs`. Upstream's rewritten spelling engine
-  no longer accepts an acronym's plural on its own.
+- A rejected term is compiled through `termPattern`, as an accepted one already
+  was, so a rejected phrase matches across the line a writer wrapped it on.
+- The rewritten spelling engine does not accept an acronym's plural -- `POSTs`
+  -- on its own. A vocabulary that wants one lists it.
