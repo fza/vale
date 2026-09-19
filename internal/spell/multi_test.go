@@ -55,3 +55,17 @@ func TestReadAssetFindsSymlinkedAsset(t *testing.T) {
 		t.Errorf("readAsset = %q, want %q", got, link)
 	}
 }
+
+// The bundled dictionary uses no directive the reader ignores.
+// A new directive appearing here means the reader has fallen behind the
+// dictionary it ships with.
+func TestDefaultDictionaryIgnoredDirectives(t *testing.T) {
+	checker, err := NewChecker()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := checker.Ignored(); len(got) != 0 {
+		t.Errorf("Ignored() = %v, want none", got)
+	}
+}

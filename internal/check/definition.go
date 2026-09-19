@@ -16,6 +16,70 @@ import (
 	"github.com/vale-cli/vale/v3/internal/nlp"
 )
 
+// cloneRule copies a rule definition, so a built-in one is never changed.
+func cloneRule(generic baseCheck) baseCheck {
+	clone := make(baseCheck, len(generic))
+	for k, v := range generic {
+		clone[k] = v
+	}
+	return clone
+}
+
+// sectionVocab is the accepted terms a file's sections add to the
+// project's, compiled once per set of vocabularies.
+type sectionVocab struct {
+	exceptRe, phraseRe *rx.Regexp
+}
+
+// vocabFor returns the terms f's sections accept, or nil.
+func vocabFor(cfg *core.Config, f *core.File) *sectionVocab {
+	if f == nil || cfg == nil || len(f.Vocab) == 0 {
+		return nil
+	}
+	key := "vocab\x00" + strings.Join(f.Vocab, "\x00")
+	v := cfg.Cached(key, func() any {
+		var terms []string
+		for _, name := range f.Vocab {
+			if vocab := cfg.Vocabularies[name]; vocab != nil {
+				terms = append(terms, vocab.Accepted...)
+			}
+		}
+		re, err := updateExceptions(nil, terms, true)
+		if err != nil {
+			re = nil
+		}
+		return &sectionVocab{exceptRe: re, phraseRe: buildPhraseRe(nil, terms, true)}
+	})
+	return v.(*sectionVocab) //nolint:errcheck // only *sectionVocab is stored
+}
+
+// accepts reports whether the sections accept word, or the phrase it sits
+// in at loc in txt.
+func (v *sectionVocab) accepts(word, txt string, loc []int) bool {
+	return v != nil && (isMatch(v.exceptRe, word) || withinPhrase(v.phraseRe, txt, loc))
+}
+
+// wrapSpace is the whitespace a vocabulary term holds between its words.
+var wrapSpace = regexp.MustCompile(`[ \t]+`)
+
+// literalTerm reports whether a vocabulary term is plain text. A period
+// is allowed, since a name like Node.js holds one and never means "any
+// character".
+func literalTerm(term string) bool {
+	bare := strings.ReplaceAll(term, ".", "")
+	return regexp.QuoteMeta(bare) == bare
+}
+
+// termPattern returns a vocabulary term as a pattern: a literal term's
+// periods are escaped, and whitespace between words matches a line wrap
+// as well as a space.
+func termPattern(term string) string {
+	if literalTerm(term) {
+		term = strings.ReplaceAll(term, ".", `\.`)
+	}
+	return wrapSpace.ReplaceAllString(term, `\s+`)
+}
+
 // FilterEnv is the environment passed to the `--filter` flag.
 type FilterEnv struct {
 	Rules []Definition
@@ -134,12 +198,34 @@ func buildRule(cfg *core.Config, generic baseCheck) (Rule, error) {
 		return Existence{}, core.NewE100("buildRule: path", msg)
 	}
 
+	rule, err := newRule(cfg, generic, path)
+	if err != nil {
+		return rule, err
+	}
+
+	// A bad action would otherwise surface as a lint-time error, once the
+	// rule had already fired, with no file or line to point at.
+	if err = checkAction(cfg, rule); err != nil {
+		if path == "internal" {
+			return rule, core.NewE100("buildRule: action", err)
+		}
+		return rule, core.NewE201FromTarget(err.Error(), "action", path)
+	}
+
+	return rule, nil
+}
+
+func newRule(cfg *core.Config, generic baseCheck, path string) (Rule, error) {
 	name, ok := generic["extends"].(string)
 	if !ok {
 		name = "unknown"
 	}
 
 	delete(generic, "path")
+	flattenAction(generic)
+	// A rule may carry its own cases (see internal/testsuite); they are for
+	// `vale test`, not the compiler.
+	delete(generic, "tests")
 	switch name {
 	case "existence":
 		return NewExistence(cfg, generic, path)
@@ -180,23 +266,22 @@ func formatMessages(msg string, desc string, subs ...string) (string, string) {
 // NOTE: We need to do this because regexp2, the library we use for extended
 // syntax, returns its locatons in *rune* offsets.
 //
-// The span is walked out to byte offsets rather than converting the string to
-// []rune: the conversion costs an allocation the size of the whole block on
-// every match, and this is called for each match and again for each alert.
-// Slicing the original instead shares its bytes, so the result is free.
-func re2Loc(s string, loc []int) (string, error) {
-	lo, hi, ok := runeSpanToBytes(s, loc[0], loc[1])
+// The block converts the span to byte offsets from an index it builds once, and
+// the text is a slice of the original: this is called for every match and
+// again for every alert, so neither a walk nor a copy per call is affordable.
+func re2Loc(blk nlp.Block, loc []int) (string, error) {
+	lo, hi, ok := blk.ByteSpan(loc[0], loc[1])
 	if !ok {
 		msg := fmt.Errorf("%d (%d:%d)",
-			utf8.RuneCountInString(s), loc[0], loc[1])
+			utf8.RuneCountInString(blk.Text), loc[0], loc[1])
 		return "", core.NewE100("re2loc: bounds", msg)
 	}
 
-	return s[lo:hi], nil
+	return blk.Text[lo:hi], nil
 }
 
-func makeAlert(chk Definition, loc []int, txt string, cfg *core.Config) (core.Alert, error) {
-	match, err := re2Loc(txt, loc)
+func makeAlert(chk Definition, loc []int, blk nlp.Block, cfg *core.Config) (core.Alert, error) {
+	match, err := re2Loc(blk, loc)
 	if err != nil {
 		return core.Alert{}, err
 	}
@@ -210,6 +295,12 @@ func makeAlert(chk Definition, loc []int, txt string, cfg *core.Config) (core.Al
 // caller that has done it once should not pay for it again -- and every
 // caller of makeAlert had already cut the matched text out to inspect it.
 func alertFor(chk Definition, loc []int, match string, cfg *core.Config) (core.Alert, error) {
+	return alertWithGroups(chk, loc, match, nil, cfg)
+}
+
+// alertWithGroups is alertFor with the matched token's capture groups, which
+// an action's arguments may refer to.
+func alertWithGroups(chk Definition, loc []int, match string, groups []string, cfg *core.Config) (core.Alert, error) {
 	action := chk.Action
 	if chk.MatchCase && action.Name == "replace" {
 		action.Params = recase(action.Params, match)
@@ -217,15 +308,16 @@ func alertFor(chk Definition, loc []int, match string, cfg *core.Config) (core.A
 
 	a := core.Alert{
 		Check: chk.Name, Severity: chk.Level, Span: loc, Link: chk.Link,
-		Match: match, Action: action}
+		Match: match, Action: action, Groups: groups}
 
 	if chk.Action.Name != "" {
 		repl := match
 
 		fixed, fixError := FixAlert(a, cfg)
 		if fixError != nil {
-			return core.Alert{}, fixError
+			return core.Alert{}, fmt.Errorf("%s: %w", chk.Name, fixError)
 		}
+		a.Suggestions = fixed
 
 		if len(fixed) == 1 {
 			repl = fixed[0]
@@ -266,8 +358,9 @@ func validateDefinition(generic map[string]interface{}, path string) error {
 			"Missing the required 'extends' key.",
 			path,
 			1)
-	} else if !core.StringInSlice(point.(string), extensionPoints) {
-		key, _ := point.(string)
+	} else if key, _ := point.(string); !core.StringInSlice(key, extensionPoints) && !isRuleRef(key) {
+		// A dotted value names another rule to extend; inherit.go resolves it
+		// before buildRule, which only ever sees an extension point.
 		return core.NewE201FromTarget(
 			fmt.Sprintf("'extends' key must be one of %v.", extensionPoints),
 			key,
@@ -275,10 +368,14 @@ func validateDefinition(generic map[string]interface{}, path string) error {
 	}
 
 	if _, ok := generic["message"]; !ok {
-		return core.NewE201FromPosition(
-			"Missing the required 'message' key.",
-			path,
-			1)
+		// A rule extending another rule inherits its message unless it says
+		// otherwise; the chain's root is still held to this when it parses.
+		if key, _ := generic["extends"].(string); !isRuleRef(key) {
+			return core.NewE201FromPosition(
+				"Missing the required 'message' key.",
+				path,
+				1)
+		}
 	}
 
 	if level, ok := generic["level"]; ok {
@@ -338,10 +435,13 @@ func makeRegexp(
 		regex += nonwordTemplate
 	}
 
+	// The result is a format string the caller fills with its tokens, so a
+	// `%` in the raw text has to survive that step.
+	raw := strings.ReplaceAll(callback(), "%", "%%")
 	if shouldAppend {
-		regex += callback()
+		regex += raw
 	} else {
-		regex = callback() + regex
+		regex = raw + regex
 	}
 
 	if noCase {
@@ -381,9 +481,11 @@ func updateExceptions(previous []string, current []string, vocab bool) (*rx.Rege
 	// otherwise any instance of the `(?i)` flag will be set for the entire
 	// expression.
 	for i, term := range previous {
+		term = termPattern(term)
 		if !strings.HasPrefix(term, "(?i)") {
-			previous[i] = fmt.Sprintf("(?-i)%s", term)
+			term = "(?-i)" + term
 		}
+		previous[i] = term
 	}
 
 	regex := makeRegexp(
@@ -429,7 +531,7 @@ func buildPhraseRe(previous, current []string, vocab bool) *rx.Regexp {
 	phrases := []string{}
 	for _, term := range terms {
 		if strings.ContainsAny(term, " \t") || strings.Contains(term, `\s`) {
-			phrases = append(phrases, loosenPhraseSpacing(term))
+			phrases = append(phrases, termPattern(term))
 		}
 	}
 
@@ -477,7 +579,15 @@ func decodeRule(input interface{}, output interface{}) error {
 
 func checkScopes(scopes []string, path string) error {
 	for _, scope := range scopes {
-		if strings.Contains(scope, "&") {
+		for _, sel := range DocSelectors(scope) {
+			if _, err := compileSelector(sel); err != nil {
+				return core.NewE201FromTarget(
+					fmt.Sprintf("invalid selector in 'doc(...)': %s", err),
+					"scope",
+					path)
+			}
+		}
+		if strings.Contains(scope, "&") || strings.HasPrefix(strings.TrimPrefix(scope, "~"), "doc(") {
 			// FIXME: multi part ...
 			continue
 		}

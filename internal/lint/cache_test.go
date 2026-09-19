@@ -337,6 +337,8 @@ func TestEveryFlagIsClassified(t *testing.T) {
 		"InPath":        true, // same
 		"Glob":          true, // selects files, not alerts
 		"Output":        true,
+		"Counts":        true, // JSON reporting only
+		"Apply":         true, // `vale fix` writes to disk; linting is unaffected
 		"NoColor":       true,
 		"NoExit":        true,
 		"NoCache":       true,

@@ -29,12 +29,13 @@ cases:
       test.md:3:27:Bug.Quotes:Commas and periods go inside quotation marks.
 
   - name: vocab-multiple
+    about: "a token two vocabularies spell differently keeps both spellings, so
+      neither `definately` nor `Definately` is reported"
     dir: vocab/Multi
     args: .
     exit: 1
     want: |
       test.md:3:5:Vale.Avoid:Avoid using 'Mac OS X'.
-      test.md:5:6:Vale.Terms:Use 'Definately' instead of 'definately'.
       test.md:7:29:Vale.Terms:Use 'IDEA' instead of 'idea'.
       test.md:13:1:Vale.Terms:Use 'Documentarians' instead of 'documentarians'.
       test.md:15:5:Vale.Terms:Use 'MyProduct' instead of 'Myproduct'.
@@ -181,6 +182,7 @@ cases:
               "Name": "",
               "Params": null
             },
+            "Suggestions": [],
             "Span": [
               13,
               22
@@ -198,6 +200,7 @@ cases:
               "Name": "",
               "Params": null
             },
+            "Suggestions": [],
             "Span": [
               17,
               20
@@ -263,12 +266,20 @@ cases:
       test.md:50:11:Markup.SentSpacing:"d.A" must contain one and only one space.
 
   - name: inline-dashes
-    about: "#1029"
+    about: "A dash beside inline markup keeps the source's spacing: none where
+      the source had none (#1029), a space where it had one (#1177)."
     dir: misc/dashes
     args: .
     exit: 1
     want: |
       test.md:1:24:Test.Dashes:Remove the spaces around the dash.
+      test.md:3:14:Test.Unspaced:Add spaces around 'm—'.
+      test.md:5:11:Test.Unspaced:Add spaces around 'm—'.
+      test.md:7:12:Test.Unspaced:Add spaces around 's—'.
+      test.md:9:5:Test.Dashes:Remove the spaces around the dash.
+      test.md:11:5:Test.Dashes:Remove the spaces around the dash.
+      test.md:13:5:Test.Dashes:Remove the spaces around the dash.
+      test.md:15:5:Test.Dashes:Remove the spaces around the dash.
 
   - name: spelling
     dir: spelling
@@ -280,7 +291,6 @@ cases:
       test.html:5:21:Spelling.Ignores:Did you really mean 'docbook'?
       test.html:14:96:Spelling.Ignores:Did you really mean 'TODO'?
       test.md:3:1:Spelling.Ignore:'HTTPie' is a typo!
-      test.md:3:96:Spelling.Ignore:'human-friendly' is a typo!
       test.txt:2:1:Spelling.GB:'This' is a typo!
       test.txt:2:6:Spelling.GB:'is' is a typo!
       test.txt:2:9:Spelling.GB:'a' is a typo!
@@ -375,3 +385,193 @@ cases:
       test.md:3:25:T.Tok:'ZQX' left in text
       test.md:3:58:T.Tok:'ZQX' left in text
       test.md:5:22:T.Tok:'ZQX' left in text
+
+  - name: json-counts
+    about: "--counts adds a per-check tally to JSON output, zeros included: an
+      enabled check that never fires is otherwise invisible, so a dead rule is
+      indistinguishable from a working one"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Live.yml: |
+        extends: existence
+        message: "'%s' left in text"
+        level: error
+        tokens:
+          - TODO
+      styles/T/Dead.yml: |
+        extends: existence
+        message: "should never fire"
+        level: error
+        tokens:
+          - zzzz-nothing
+      doc.md: |
+        A TODO left here.
+    args: --output=JSON --counts doc.md
+    exit: 1
+    want: |
+      {
+        "files": {
+          "doc.md": [
+            {
+              "Action": {
+                "Name": "",
+                "Params": null
+              },
+              "Suggestions": [],
+              "Span": [
+                3,
+                6
+              ],
+              "Check": "T.Live",
+              "Description": "",
+              "Link": "",
+              "Message": "'TODO' left in text",
+              "Severity": "error",
+              "Match": "TODO",
+              "Line": 1
+            }
+          ]
+        },
+        "counts": {
+          "T.Dead": 0,
+          "T.Live": 1
+        }
+      }
+
+  - name: deep-indent-directive
+    about: "a directive comment on a six-space continuation indent fails
+      CommonMark's HTML-block test and lands inline, inside the paragraph; the
+      block-level toggle has cancelled out by the time the paragraph is
+      linted, so the directive's recorded region suppresses the alert instead"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Hedging.yml: |
+        extends: existence
+        message: "Hedge: '%s'."
+        level: error
+        ignorecase: true
+        tokens:
+          - it's worth noting
+      doc.md: |
+        - [ ] **Bold lead.** Six-space continuation indent.
+              <!-- vale T.Hedging = NO -->
+              Here it's worth noting is quoted.
+              <!-- vale T.Hedging = YES -->
+              And it's worth noting this follows the YES.
+
+        - [ ] Checkbox, two-space indent.
+          <!-- vale T.Hedging = NO -->
+          Here it's worth noting is quoted.
+          <!-- vale T.Hedging = YES -->
+
+        - Plain bullet, six-space indent.
+              <!-- vale T.Hedging = NO -->
+              Here it's worth noting is quoted.
+              <!-- vale T.Hedging = YES -->
+
+        - No directive, so it's worth noting this must fire.
+    args: --output=line doc.md
+    exit: 1
+    want: |
+      doc.md:5:11:T.Hedging:Hedge: 'it's worth noting'.
+      doc.md:17:20:T.Hedging:Hedge: 'it's worth noting'.
+
+  - name: fix-apply
+    about: "`fix --apply` writes every unambiguous fix -- exactly one
+      suggestion, at a span no other fix touches -- and reports the rest
+      rather than guessing: a multi-suggestion alert is skipped, and so is
+      every member of an overlapping pair"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Swap.yml: |
+        extends: substitution
+        message: "Use '%s'."
+        level: warning
+        action:
+          name: replace
+        swap:
+          utilize: use
+      styles/T/Multi.yml: |
+        extends: existence
+        message: "Vague: '%s'."
+        level: warning
+        action:
+          name: replace
+          params:
+            - alpha
+            - beta
+        tokens:
+          - vagueterm
+      styles/T/OverA.yml: |
+        extends: substitution
+        message: "Use '%s'."
+        level: warning
+        action:
+          name: replace
+        swap:
+          quite bad: poor
+      styles/T/OverB.yml: |
+        extends: substitution
+        message: "Use '%s'."
+        level: warning
+        action:
+          name: replace
+        swap:
+          bad outcome: failure
+      doc.md: |
+        We should utilize the API.
+
+        This vagueterm stays, and this was a quite bad outcome.
+    args: fix --apply doc.md
+    exit: 0
+    want: |
+      doc.md: applied 1, skipped 3
+        3:6	T.Multi	2 suggestions
+        3:38	T.OverA	overlaps T.OverB
+        3:44	T.OverB	overlaps T.OverA
+
+  - name: occurrence-min-position
+    about: "an `occurrence` shortfall with zero matches lands on the scope
+      that fell short, anchored to its first word: reported at 1:1, one
+      alert also hid every other deficient scope in the file"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Presence.yml: |
+        extends: occurrence
+        message: "A paragraph here has no slang (found %d)."
+        level: warning
+        scope: paragraph
+        min: 1
+        ignorecase: true
+        token: '\b(?:no cap|cooked|rizz)\b'
+      doc.md: |
+        This rollout is cooked, no cap.
+
+        This paragraph has none of it at all.
+
+        Neither does this one, which is plain corporate prose.
+    args: --output=line doc.md
+    exit: 0
+    want: |
+      doc.md:3:1:T.Presence:A paragraph here has no slang (found 0).
+      doc.md:5:1:T.Presence:A paragraph here has no slang (found 0).

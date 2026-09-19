@@ -3,7 +3,10 @@ package core
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+
+	"github.com/vale-cli/vale/v3/internal/glob"
 )
 
 // TestFileSuffixes name the YAML that holds a rule's test cases rather than a
@@ -64,6 +67,7 @@ var FormatByExtension = map[string][]string{
 	`\.(?:go)$`:                              {".go", "code"},
 	`\.(?:hs)$`:                              {".hs", "code"},
 	`\.(?:html|htm|shtml|xhtml)$`:            {".html", "markup"},
+	`\.(?:ipynb)$`:                           {".ipynb", "markup"},
 	`\.(?:java|bsh)$`:                        {".java", "code"},
 	`\.(?:jl)$`:                              {".jl", "code"},
 	`\.(?:js|jsx)$`:                          {".js", "code"},
@@ -107,7 +111,14 @@ var FormatByFilename = map[string][]string{
 
 func FormatFromExt(path string, mapping map[string]string) (string, string) {
 	base := strings.Trim(filepath.Ext(path), ".")
-	if base == "" {
+	kind := getFormat("." + base)
+
+	format, found := formatFor(path, mapping)
+	if !found && base == "" {
+		// A build file is named rather than suffixed, so matching on the
+		// extension alone never reaches one. The configured `[formats]`
+		// mapping is consulted first, so a project naming such a file itself
+		// still decides what it is read as.
 		name := filepath.Base(path)
 		for r, f := range FormatByFilename {
 			if m, _ := regexp.MatchString(r, name); m {
@@ -115,9 +126,8 @@ func FormatFromExt(path string, mapping map[string]string) (string, string) {
 			}
 		}
 	}
-	kind := getFormat("." + base)
 
-	if format, found := mapping[base]; found {
+	if found {
 		if kind == "code" && getFormat("."+format) == "markup" {
 			// NOTE: This is a special case of embedded markup within code.
 			return "." + format, "fragment"
@@ -140,6 +150,49 @@ func FormatFromExt(path string, mapping map[string]string) (string, string) {
 	}
 
 	return "unknown", "unknown"
+}
+
+// formatFor returns the format `[formats]` maps path to: by its extension,
+// or by a key naming the file or a glob it matches.
+func formatFor(path string, mapping map[string]string) (string, bool) {
+	if format, found := mapping[strings.Trim(filepath.Ext(path), ".")]; found {
+		return format, true
+	}
+
+	keys := make([]string, 0, len(mapping))
+	for k := range mapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	name := filepath.Base(path)
+	slashed := filepath.ToSlash(path)
+	for _, k := range keys {
+		if !strings.ContainsAny(k, "*?[{/") {
+			if k == name {
+				return mapping[k], true
+			}
+			continue
+		}
+		pat, err := glob.Compile(k)
+		if err != nil {
+			continue
+		}
+		if pat.Match(name) || pat.Match(slashed) {
+			return mapping[k], true
+		}
+	}
+	return "", false
+}
+
+// NormalizePath returns path with the extension `[formats]` maps it to, so
+// that a section matches the format a file is read as.
+func NormalizePath(path string, mapping map[string]string) string {
+	format, found := formatFor(path, mapping)
+	if !found {
+		return path
+	}
+	return strings.TrimSuffix(path, filepath.Ext(path)) + "." + format
 }
 
 func getFormat(ext string) string {

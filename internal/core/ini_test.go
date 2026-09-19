@@ -352,3 +352,135 @@ func TestFileLevel(t *testing.T) {
 		})
 	}
 }
+
+// `Style.Rule[param]` is the php.ini-style parameter key; anything else is
+// left for the level/toggle path, and structural fields are refused with a
+// pointer at inheritance.
+func TestAsRuleParam(t *testing.T) {
+	cfg, err := NewConfig(&CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		key, val string
+		isParam  bool
+	}{
+		{"Std.SentenceLength[max]", "30", true},
+		{"Std.dates.TimeFormat[ignorecase]", "true", true},
+		{"Std.SentenceLength", "error", false},
+		{"BasedOnStyles", "Std", false},
+		{"NoDot[max]", "1", false},
+	} {
+		got, pErr := asRuleParam(tt.key, tt.val, cfg)
+		if pErr != nil {
+			t.Fatalf("%s: %v", tt.key, pErr)
+		}
+		if got != tt.isParam {
+			t.Errorf("asRuleParam(%q) = %v; want %v", tt.key, got, tt.isParam)
+		}
+	}
+
+	if cfg.RuleToParams["Std.SentenceLength"]["max"] != "30" {
+		t.Errorf("param not stored: %v", cfg.RuleToParams)
+	}
+
+	if _, pErr := asRuleParam("Std.Passive[tokens]", "x", cfg); pErr == nil ||
+		!strings.Contains(pErr.Error(), "extend") {
+		t.Errorf("structural param: got %v; want the extend guidance", pErr)
+	}
+
+	// One spelling per setting: the classic key owns levels.
+	if _, pErr := asRuleParam("S.R[level]", "error", cfg); pErr == nil ||
+		!strings.Contains(pErr.Error(), "S.R = error") {
+		t.Errorf("bracketed level: got %v; want a pointer at the classic key", pErr)
+	}
+}
+
+// A later *configuration* wins -- package fragments and the local ini load
+// sequentially, each calling this once per key. Within one file the ini
+// library collapses duplicate keys to the first before this layer runs.
+func TestRuleParamLastWins(t *testing.T) {
+	cfg, _ := NewConfig(&CLIFlags{})
+	_, _ = asRuleParam("S.R[max]", "10", cfg)
+	_, _ = asRuleParam("S.R[max]", "20", cfg)
+	if cfg.RuleToParams["S.R"]["max"] != "20" {
+		t.Errorf("got %v; want the later value", cfg.RuleToParams["S.R"])
+	}
+}
+
+// An escaped comma stays inside its pattern; a bare one still separates
+// patterns. See #1164.
+func Test_processConfig_ignoresKeepEscapedCommas(t *testing.T) {
+	body := `[*]
+TokenIgnores = \b[a-z]{2\,}\b, (\$+[^\n$]+\$+)
+BlockIgnores = BEGIN.{2\,}END
+TokenIgnores = \\, \d{1\,3}
+
+[*.md]
+TokenIgnores = \b[a-z]{2\,}\b
+BlockIgnores = BEGIN.{2\,}END, (?s)<!--.*?-->
+`
+	uCfg, err := shadowLoad([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf, err := NewConfig(&CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = processConfig(uCfg, conf, false); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		got  []string
+		want []string
+	}{
+		{"global TokenIgnores", conf.TokenIgnores["*"], []string{
+			`\b[a-z]{2,}\b`, `(\$+[^\n$]+\$+)`, `\\`, `\d{1,3}`,
+		}},
+		{"global BlockIgnores", conf.BlockIgnores["*"], []string{`BEGIN.{2,}END`}},
+		{"section TokenIgnores", conf.TokenIgnores["*.md"], []string{`\b[a-z]{2,}\b`}},
+		{"section BlockIgnores", conf.BlockIgnores["*.md"], []string{
+			`BEGIN.{2,}END`, `(?s)<!--.*?-->`,
+		}},
+	}
+	for _, c := range cases {
+		if fmt.Sprint(c.got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: got %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+// A package's configuration is read before the project's, and a key both set
+// takes the project's value: the later source wins, for a level, a parameter,
+// and a switch alike.
+func Test_processConfig_laterSourceWins(t *testing.T) {
+	pkg := []byte("[*]\nS.G = error\n\n[*.md]\nS.R = error\nS.R[max] = 10\n")
+	local := []byte("[*]\nS.G = NO\n\n[*.md]\nS.R = suggestion\nS.R[max] = 20\n")
+
+	uCfg, err := shadowLoad(pkg, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conf, err := NewConfig(&CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = processConfig(uCfg, conf, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := conf.SLevels["*.md"]["S.R"]; got != "suggestion" {
+		t.Errorf("level = %q, want the project's", got)
+	}
+	if got := conf.RuleToParams["S.R"]["max"]; got != "20" {
+		t.Errorf("param = %q, want the project's", got)
+	}
+	if conf.GChecks["S.G"] {
+		t.Error("S.G is on; the project switched it off")
+	}
+}

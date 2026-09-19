@@ -52,7 +52,10 @@ func NewConsistency(cfg *core.Config, generic baseCheck, path string) (Consisten
 		func() bool { return !rule.Nonword },
 		func() string { return "" }, true)
 
-	chkKey := strings.Split(name, ".")[1]
+	// The capture-group stem is the rule's base name -- the last segment,
+	// since the rule may sit in a subdirectory.
+	parts := strings.Split(name, ".")
+	chkKey := parts[len(parts)-1]
 	count := 0
 	for v1, v2 := range rule.Either {
 		count += 2
@@ -107,7 +110,7 @@ func (o Consistency) Run(blk nlp.Block, f *core.File, cfg *core.Config) ([]core.
 			// has always reported. Anchoring would promote that leftover into
 			// the output. The rule fires at most once per block, so there is
 			// nothing to gain by it either.
-			a, err := makeAlert(o.Definition, loc, txt, cfg)
+			a, err := makeAlert(o.Definition, loc, blk, cfg)
 			if err != nil {
 				return alerts, err
 			}

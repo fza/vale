@@ -127,7 +127,7 @@ func (c Capitalization) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]co
 		}
 		pos := []int{0, nlp.StrLen(blk.Text)}
 
-		a, err := makeAlert(c.Definition, pos, blk.Text, cfg)
+		a, err := makeAlert(c.Definition, pos, blk, cfg)
 		if err != nil {
 			return alerts, err
 		}
@@ -138,6 +138,9 @@ func (c Capitalization) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]co
 		// deliberate: this rule decides the case, and re-casing its suggestion
 		// to match the text it is correcting would undo the correction.
 		a.Action = action
+		if action.Name == "replace" {
+			a.Suggestions = action.Params
+		}
 
 		anchor(&a, blk)
 		alerts = append(alerts, a)

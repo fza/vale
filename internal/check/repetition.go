@@ -63,7 +63,8 @@ func NewRepetition(cfg *core.Config, generic baseCheck, path string) (Repetition
 // Run executes the `repetition`-based rule.
 //
 // The rule looks for repeated matches of its regex -- such as "this this".
-func (o Repetition) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.Alert, error) {
+func (o Repetition) Run(blk nlp.Block, f *core.File, cfg *core.Config) ([]core.Alert, error) {
+	vocab := vocabFor(cfg, f)
 	var curr, prev string
 	var hit bool
 	var ploc []int
@@ -72,7 +73,7 @@ func (o Repetition) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.A
 
 	txt := blk.Text
 	for _, loc := range o.pattern.FindAllStringIndex(txt, -1) {
-		converted, err := re2Loc(txt, loc)
+		converted, err := re2Loc(blk, loc)
 		if err != nil {
 			return alerts, err
 		}
@@ -92,7 +93,7 @@ func (o Repetition) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.A
 		if hit && count > o.Max {
 			pos := []int{ploc[0], loc[1]}
 
-			converted, err = re2Loc(txt, pos)
+			converted, err = re2Loc(blk, pos)
 			if err != nil {
 				return alerts, err
 			}
@@ -105,8 +106,9 @@ func (o Repetition) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.A
 				//
 				// All plans except a Personal plan can use Redis. Redis ...
 				floc := []int{ploc[0], loc[1]}
-				if !isMatch(o.exceptRe, converted) && !withinPhrase(o.phraseRe, txt, floc) {
-					a, erra := makeAlert(o.Definition, floc, txt, cfg)
+				if !isMatch(o.exceptRe, converted) && !withinPhrase(o.phraseRe, txt, floc) &&
+					!vocab.accepts(converted, txt, floc) {
+					a, erra := makeAlert(o.Definition, floc, blk, cfg)
 					if erra != nil {
 						return alerts, erra
 					}

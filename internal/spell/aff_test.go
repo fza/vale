@@ -1,6 +1,7 @@
 package spell
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -273,9 +274,9 @@ test/AB
 
 func TestCompoundSegmentation(t *testing.T) {
 	// A dictionary that enables affix-flag compounding should accept words
-	// that split into dictionary segments (e.g. German "Funktionswert"). See
-	// #848.
-	dic := "2\nfoo\nbar\n"
+	// that split into flagged dictionary segments (e.g. German
+	// "Funktionswert"). See #848.
+	dic := "3\nfoo/A\nbar/A\nbaz\n"
 
 	withFlags := "SET UTF-8\nCOMPOUNDFLAG A\nCOMPOUNDMIN 2\n"
 	gs, err := newGoSpellReader(strings.NewReader(withFlags), strings.NewReader(dic))
@@ -287,6 +288,9 @@ func TestCompoundSegmentation(t *testing.T) {
 	}
 	if gs.spell("fooqux") {
 		t.Error("expected 'fooqux' (qux not a word) to be rejected")
+	}
+	if gs.spell("foobaz") {
+		t.Error("expected 'foobaz' (baz has no compound flag) to be rejected")
 	}
 
 	// Without compound flags, no segmentation happens (English behavior).
@@ -410,5 +414,110 @@ func TestCompoundRuleCapacityIsBounded(t *testing.T) {
 	}
 	if cap(aff.CompoundRule) > maxCompoundRules {
 		t.Errorf("capacity = %d, want <= %d", cap(aff.CompoundRule), maxCompoundRules)
+	}
+}
+
+// A dictionary's BREAK rules let a word pass when each piece does. See
+// #1165.
+func TestBreakRules(t *testing.T) {
+	dic := "2\nfoo\nbar\n"
+	load := func(aff string) *goSpell {
+		t.Helper()
+		gs, err := newGoSpellReader(strings.NewReader(aff), strings.NewReader(dic))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return gs
+	}
+
+	plain := load("SET UTF-8\nBREAK 1\nBREAK -\nWORDCHARS -\n")
+	for word, want := range map[string]bool{
+		"foo-bar":     true,
+		"foo-bar-foo": true, // split more than once
+		"foo-qux":     false,
+		"qux-bar":     false,
+		"-foo":        false, // an interior rule needs both sides
+		"foo-":        false,
+		"foo--bar":    false,
+	} {
+		if got := plain.spell(word); got != want {
+			t.Errorf("BREAK -: spell(%q) = %v, want %v", word, got, want)
+		}
+	}
+
+	anchored := load("SET UTF-8\nBREAK 2\nBREAK ^-\nBREAK -$\n")
+	for word, want := range map[string]bool{
+		"-foo":    true,
+		"foo-":    true,
+		"-foo-":   true,
+		"foo-bar": false, // no interior rule
+		"-":       false,
+	} {
+		if got := anchored.spell(word); got != want {
+			t.Errorf("anchored BREAK: spell(%q) = %v, want %v", word, got, want)
+		}
+	}
+
+	// No BREAK line means Hunspell's defaults: `-`, `^-`, and `-$`.
+	defaults := load("SET UTF-8\n")
+	for word, want := range map[string]bool{
+		"foo-bar": true, "-foo": true, "foo-": true, "foo-qux": false, "-": false,
+	} {
+		if got := defaults.spell(word); got != want {
+			t.Errorf("default BREAK: spell(%q) = %v, want %v", word, got, want)
+		}
+	}
+
+	// `BREAK 0` declares that there are none.
+	none := load("SET UTF-8\nBREAK 0\n")
+	if none.spell("foo-bar") {
+		t.Error("expected 'foo-bar' to be rejected under BREAK 0")
+	}
+}
+
+func TestBreakRulesParse(t *testing.T) {
+	tests := map[string][]string{
+		"BREAK 0":                    nil,
+		"BREAK 2\nBREAK -\nBREAK ^-": {"-", "^-"},
+		"BREAK -\nBREAK --":          {"-", "--"}, // count is optional
+		"BREAK 1\nBREAK 3":           {"3"},       // only the first number is a count
+	}
+	for src, want := range tests {
+		aff, err := newDictConfig(strings.NewReader(src))
+		if err != nil {
+			t.Errorf("%q: %v", src, err)
+			continue
+		}
+		if strings.Join(aff.Break, ",") != strings.Join(want, ",") {
+			t.Errorf("%q: Break = %q, want %q", src, aff.Break, want)
+		}
+	}
+	if _, err := newDictConfig(strings.NewReader("BREAK")); err == nil {
+		t.Error("expected a bare BREAK line to be rejected")
+	}
+}
+
+// A directive the reader does not implement is recorded once, so a caller
+// can tell a dictionary that loaded from one that loaded faithfully.
+func TestUnsupportedDirectivesAreRecorded(t *testing.T) {
+	affContent := `# a comment line
+SET UTF-8
+COMPLEXPREFIXES
+MAP 2
+MAP uü
+COMPLEXPREFIXES
+TRY esianrtolcdugmphbyfvkwzESIANRTOLCDUGMPHBYFVKWZ'
+
+SFX A Y 1
+SFX A 0 s .
+`
+	aff, err := newDictConfig(strings.NewReader(affContent))
+	if err != nil {
+		t.Fatalf("newDictConfig error: %v", err)
+	}
+
+	want := []string{"COMPLEXPREFIXES", "MAP"}
+	if !reflect.DeepEqual(aff.Ignored, want) {
+		t.Errorf("Ignored = %v, want %v", aff.Ignored, want)
 	}
 }

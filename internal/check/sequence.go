@@ -596,8 +596,10 @@ func (s Sequence) targetRange(m match) (int, int, bool) {
 // Declaring `list` means the sentences of list items, not the whole document's.
 // An undeclared scope means all of them.
 //
-// A scope that already names sentences is left as it is, so `sentence.list`
-// and `list` describe the same thing.
+// A scope that already names sentences is left as it is. Any other is joined
+// to `sentence` with the grammar's own conjunction, which reads the same set
+// of blocks as `sentence.list` would and holds for a term the dot cannot
+// qualify, such as a selector.
 func sentenceScope(declared []string) []string {
 	if len(declared) == 0 {
 		return []string{"sentence"}
@@ -609,11 +611,15 @@ func sentenceScope(declared []string) []string {
 			scopes = append(scopes, s)
 			continue
 		}
-		// Negation applies to the part being excluded, so it stays in front:
-		// `~list` narrows to sentences outside a list, not to something
-		// outside `sentence.list`.
-		if neg, found := strings.CutPrefix(s, "~"); found {
-			scopes = append(scopes, "~"+neg)
+		// A bare negated term names only what to exclude and never mentions
+		// `sentence` itself, so asksForSentence (scope.go) skips every
+		// `sentence.*` fragment block for it and the rule matched the whole
+		// unsegmented block instead -- narrowing to `~list` alone was a
+		// no-op. AND-ing `sentence` in front keeps the exclusion and still
+		// narrows: `sentence&~list` is "sentences outside a list", which is
+		// what the rule actually needs.
+		if strings.HasPrefix(s, "~") {
+			scopes = append(scopes, "sentence&"+s)
 			continue
 		}
 		// `paragraph` names no block of its own. Splitting wraps every block
@@ -626,13 +632,13 @@ func sentenceScope(declared []string) []string {
 			scopes = append(scopes, "sentence"+rest)
 			continue
 		}
-		scopes = append(scopes, "sentence."+s)
+		scopes = append(scopes, "sentence & "+s)
 	}
 
 	return scopes
 }
 
-func (s Sequence) Run(blk nlp.Block, f *core.File, _ *core.Config) ([]core.Alert, error) {
+func (s Sequence) Run(blk nlp.Block, f *core.File, cfg *core.Config) ([]core.Alert, error) {
 	var alerts []core.Alert
 	var offset []string
 	var history []int
@@ -702,10 +708,14 @@ func (s Sequence) Run(blk nlp.Block, f *core.File, _ *core.Config) ([]core.Alert
 						s.Description, m.text...)
 					a.Offset = offset
 
+					if err := resolveFix(&a, cfg); err != nil {
+						return alerts, err
+					}
+
 					alerts = append(alerts, a)
 					offset = []string{}
 				} else if loc != nil {
-					converted, err := re2Loc(txt, loc)
+					converted, err := re2Loc(blk, loc)
 					if err != nil {
 						return alerts, err
 					}

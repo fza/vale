@@ -17,6 +17,11 @@ func updateQueries(f *core.File, views map[string]*core.View) ([]core.Scope, err
 	var found []core.Scope
 
 	for syntax, view := range views {
+		if view.Engine != "tree-sitter" {
+			// A data View's selectors are not queries; it reads the file
+			// itself, and may hand a cell of it here as code.
+			continue
+		}
 		sec, err := glob.Compile(syntax)
 		if err != nil {
 			return nil, err
@@ -89,7 +94,7 @@ func (l *Linter) lintCode(f *core.File) error {
 	// Read before the loop, which replaces the file's text with each comment's.
 	source := strings.Split(wholeFile, "\n")
 
-	last := 0
+	last := len(f.Alerts) // the file may hold alerts from cells before this one
 	for _, comment := range comments {
 		f.SetMetaScope(comment.Scope)
 		if l.skipsComment(comment.Scope) {
@@ -105,7 +110,7 @@ func (l *Linter) lintCode(f *core.File) error {
 		}
 
 		err = eachDirectiveRun(f, text, func(text string) error {
-			f.SetText(maskCode(text))
+			f.SetText(maskCode(maskURLs(text)))
 
 			runErr := l.lintLines(f)
 			if runErr != nil {
@@ -429,6 +434,16 @@ func eachDirectiveRun(f *core.File, text string, lint func(string) error) error 
 // lintCodeOld lints source code by analyzing its comments.
 //
 // Deprecated: we now use tree-sitter to parse code and collect comments.
+// urlRE matches a URL in a comment, up to the punctuation that would
+// close a sentence or a bracket around it.
+var urlRE = regexp.MustCompile(`\b(?:https?|ftp)://[^\s<>"'` + "`" + `)\]]*[^\s<>"'` + "`" + `)\].,;:!?]`)
+
+// maskURLs blanks the URLs in a comment: a URL is never prose, and in
+// markup the converter keeps one out of the text already.
+func maskURLs(s string) string {
+	return urlRE.ReplaceAllStringFunc(s, nlp.BlankRunes)
+}
+
 func (l *Linter) lintCodeOld(f *core.File) error {
 	var line, match, txt string
 	var lnLength, padding int
@@ -466,6 +481,7 @@ func (l *Linter) lintCodeOld(f *core.File) error {
 				block.WriteString(line)
 				txt = block.String()
 
+				txt = maskURLs(txt)
 				b := nlp.NewBlock(
 					txt, txt, fmt.Sprintf(scope, "text.comment.block"))
 				if !(skipAll || skipBlock) {
@@ -485,6 +501,7 @@ func (l *Linter) lintCodeOld(f *core.File) error {
 			// 'print("foo") # ...' will be condensed to '# ...'.
 			padding = lnLength - len(match)
 
+			match = maskURLs(match)
 			b := nlp.NewBlock(
 				match, match, fmt.Sprintf(scope, "text.comment.line"))
 			if !(skipAll || skipInline) {

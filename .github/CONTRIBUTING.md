@@ -9,6 +9,8 @@ Interested in contributing to Vale? Great&mdash;we welcome contributions of any 
 - [Testing](#testing)
 - [Benchmarking](#benchmarking)
 - [Code Contribution Guidelines](#code-contribution-guidelines)
+- [AI-Assisted Contributions](#ai-assisted-contributions)
+- [License Agreement](#license-agreement)
 - [Git Commit Message Guidelines](#git-commit-message-guidelines)
 - [Terminology](#terminology)
 
@@ -186,9 +188,29 @@ To make the contribution process as seamless as possible, we ask for the followi
     * Squash your commits into a single commit with `git rebase -i`. It's okay to force update your pull request with `git push -f`.
     * Follow the **Git Commit Message Guidelines** below.
 
+## AI-Assisted Contributions
+
+You may use whatever tools you like to write a contribution, with these conditions:
+
+* **You are the author.** You must understand every line you submit and be able to answer questions about it in review without going back to the tool. If you can't, don't open the pull request.
+* **Say so.** If a substantial part of the code or text was tool-generated, note the tool in the pull request description or a commit trailer such as `Assisted-by: Claude Code`. This helps review; it isn't a mark against the change.
+* **Write the description yourself.** State the problem and the fix in a few sentences. A long, sectioned write-up for a small change costs more review time than the change.
+* **Don't sweep the tree.** A pull request should fix a bug you hit or build a feature that was agreed in an issue first. Standalone cleanups, dead-code removal, and refactors found by running a tool over the codebase will be closed; fold them into the change that needs them.
+* **Undocumented options and hidden commands are out of scope.** If it isn't in the [documentation](https://docs.vale.sh/), it's an experiment and may be removed. Don't add tests or fixes that harden it.
+* **No unattended agents.** Tools must not open issues, comment on pull requests, or push commits without a person reading and approving each action.
+* **One thing at a time.** This repository uses GitHub's [pull request limits](https://github.blog/open-source/maintainers/how-pull-request-limits-are-cutting-down-the-noise/), which cap how many pull requests a contributor can have open at once. Finish one before opening the next.
+
+## License Agreement
+
+The first time you open a pull request, a bot will ask you to agree to Vale's [contributor license agreement](CLA.md). It's a few sentences, you agree by posting a comment with the exact sentence the bot asks for, and it's once per person, not per pull request.
+
+What it says: you wrote the change or have the right to contribute it, and you let the project use it under its current license and any other license it adopts later. You keep the copyright to your work.
+
+Why it exists: Vale has been MIT-licensed since 2016 and there are no plans to change that. The agreement is insurance, so that if the license ever does need to change, the project won't have to track down every past contributor for permission.
+
 ## Git Commit Message Guidelines
 
-Vale follows a modified version of the [AngularJS Commit Guidelines](https://github.com/angular/angular.js/blob/master/CONTRIBUTING.md#-git-commit-guidelines). A commit message should take the following form:
+Vale follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), with the types [commitlint](https://commitlint.js.org/) accepts. A commit message should take the following form:
 
 ```text
 <type>: <subject>
@@ -198,7 +220,7 @@ Vale follows a modified version of the [AngularJS Commit Guidelines](https://git
 <footer>
 ```
 
-with `<body>` and `<footer>` being optional. `<type>` should be one of the following:
+with `<body>` and `<footer>` being optional, and `<type>(<scope>):` allowed where a scope helps (`fix(spell): ...`). The subject is a command in lower case with no period at the end. `<type>` should be one of the following:
 
 - `feat`: A new feature
 - `fix`: A bug fix
@@ -207,7 +229,10 @@ with `<body>` and `<footer>` being optional. `<type>` should be one of the follo
 - `refactor`: A code change that neither fixes a bug nor adds a feature
 - `perf`: A code change that improves performance (in this case, please include relevant benchmark(s))
 - `test`: Adding missing or correcting existing tests
-- `chore`: Changes to the build process or auxiliary tools
+- `build`: Changes to the build or dependencies
+- `ci`: Changes to the workflows
+- `chore`: Changes to auxiliary tools
+- `revert`: Reverts an earlier commit
 
 An example would be something like:
 
@@ -217,6 +242,18 @@ refactor: make "warning" the default lint level
 Also demotes `Annotations` and `PassiveVoice` to "suggestions."
 
 Related to #30.
+```
+
+Vale checks the message itself, with the [Commits](https://github.com/jdkato/commits) package that [`.vale.ini`](../.vale.ini) names. To run that on every commit, point Git at the tracked hook once per clone:
+
+```bash
+git config core.hooksPath .github/hooks
+```
+
+The hook syncs the styles on its first run and reads each message before the commit lands. A missing or unknown type, a capital or a period on the subject, or a body line past 100 characters stops the commit; a subject that isn't a command (`Added`, `Fixes`) is a warning. The same check runs on every commit of a pull request in [`commits.yml`](workflows/commits.yml). To try a message without committing:
+
+```bash
+./bin/vale --path=COMMIT_EDITMSG < message.txt
 ```
 
 ## Terminology

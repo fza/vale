@@ -29,6 +29,11 @@ import (
 
 // MDX configuration: Markdown, plus the MDX constructs.
 var goldMdx = goldmark.New(
+	goldmark.WithParser(parser.NewParser(
+		parser.WithBlockParsers(mdxBlockParsers()...),
+		parser.WithInlineParsers(parser.DefaultInlineParsers()...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+	)),
 	goldmark.WithExtensions(
 		extension.GFM,
 		extension.Footnote,
@@ -44,9 +49,6 @@ type mdxExtension struct{}
 
 func (mdxExtension) Extend(m goldmark.Markdown) {
 	m.Parser().AddOptions(parser.WithBlockParsers(
-		// Ahead of the indented-code parser (500): MDX removed indented code
-		// from the grammar, so four leading spaces are an ordinary paragraph.
-		util.Prioritized(&mdxIndentParser{}, 499),
 		// Ahead of the HTML block parser (900), which would otherwise claim
 		// a JSX element, and the paragraph parser (1000).
 		util.Prioritized(&mdxEsmParser{}, 880),
@@ -76,8 +78,18 @@ type mdxScan struct {
 	comment bool // inside /* ... */
 }
 
-// scan processes one line, returning how far the state carried.
+// scan processes one line.
 func (s *mdxScan) scan(line []byte) {
+	s.walk(line, false)
+}
+
+// scanExpr processes one line of a `{...}` expression, stopping once it
+// closes, and returns the index just past the closing brace, or -1.
+func (s *mdxScan) scanExpr(line []byte) int {
+	return s.walk(line, true)
+}
+
+func (s *mdxScan) walk(line []byte, expr bool) int {
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 
@@ -106,15 +118,19 @@ func (s *mdxScan) scan(line []byte) {
 					s.comment = true
 					i++
 				} else if line[i+1] == '/' {
-					return // a line comment runs to the end
+					return -1 // a line comment runs to the end
 				}
 			}
 		case '{', '(', '[':
 			s.depth++
 		case '}', ')', ']':
 			s.depth--
+			if expr && s.depth <= 0 {
+				return i + 1
+			}
 		}
 	}
+	return -1
 }
 
 // An mdxBlock is one flow-level MDX node: an ESM block, a flow expression,
@@ -157,44 +173,123 @@ func mdxConsume(n *mdxBlock, reader text.Reader) {
 	reader.Advance(segment.Len() - 1)
 }
 
-// An mdxIndentParser reads an indented chunk as the paragraph MDX says it
-// is -- the grammar has no indented code blocks.
-type mdxIndentParser struct{}
-
-func (*mdxIndentParser) Trigger() []byte { return nil }
-
-func (*mdxIndentParser) Open(_ ast.Node, reader text.Reader, _ parser.Context) (ast.Node, parser.State) {
-	line, segment := reader.PeekLine()
-	if w, _ := util.IndentWidth(line, reader.LineOffset()); w < 4 || util.IsBlank(line) {
-		return nil, parser.NoChildren
-	}
-
-	node := ast.NewParagraph()
-	node.Lines().Append(segment.TrimLeftSpace(reader.Source()))
-	reader.Advance(segment.Len() - 1)
-	return node, parser.NoChildren
-}
-
-func (*mdxIndentParser) Continue(node ast.Node, reader text.Reader, _ parser.Context) parser.State {
-	line, segment := reader.PeekLine()
-	if util.IsBlank(line) {
-		return parser.Close
-	}
-	node.Lines().Append(segment.TrimLeftSpace(reader.Source()))
-	reader.Advance(segment.Len() - 1)
-	return parser.Continue | parser.NoChildren
-}
-
-func (*mdxIndentParser) Close(node ast.Node, reader text.Reader, _ parser.Context) {
-	lines := node.Lines()
-	if length := lines.Len(); length != 0 {
-		last := lines.At(length - 1)
-		lines.Set(length-1, last.TrimRightSpace(reader.Source()))
+// mdxBlockParsers is CommonMark without indented code, which MDX removed
+// from the grammar, and with every other block opening at any indentation.
+func mdxBlockParsers() []util.PrioritizedValue {
+	return []util.PrioritizedValue{
+		util.Prioritized(mdxIndented{parser.NewSetextHeadingParser()}, 100),
+		util.Prioritized(mdxIndented{parser.NewThematicBreakParser()}, 200),
+		util.Prioritized(mdxIndented{parser.NewListParser()}, 300),
+		util.Prioritized(mdxIndented{parser.NewListItemParser()}, 400),
+		util.Prioritized(mdxIndented{parser.NewATXHeadingParser()}, 600),
+		util.Prioritized(mdxIndented{parser.NewFencedCodeBlockParser()}, 700),
+		util.Prioritized(mdxIndented{parser.NewBlockquoteParser()}, 800),
+		util.Prioritized(mdxIndented{parser.NewHTMLBlockParser()}, 900),
+		util.Prioritized(mdxIndented{parser.NewParagraphParser()}, 1000),
 	}
 }
 
-func (*mdxIndentParser) CanInterruptParagraph() bool { return false }
-func (*mdxIndentParser) CanAcceptIndentedLine() bool { return true }
+// An mdxIndented wraps a block parser so that indentation of four or more
+// columns is whitespace, as it is in MDX: the wrapper consumes it before
+// the parser looks at the line, and a block opened that way consumes the
+// same amount on each of its later lines, so its offsets stay consistent.
+type mdxIndented struct {
+	parser.BlockParser
+}
+
+var mdxIndentKey = parser.NewContextKey()
+
+// mdxIndentState tracks what each open block consumes per line, and what a
+// block consumed on the current line before closing, which the next block
+// opened on that line inherits.
+type mdxIndentState struct {
+	owned    map[ast.Node]int
+	line     int
+	orphaned int
+}
+
+func mdxIndentOf(pc parser.Context) *mdxIndentState {
+	if st, ok := pc.Get(mdxIndentKey).(*mdxIndentState); ok {
+		return st
+	}
+	st := &mdxIndentState{owned: map[ast.Node]int{}}
+	pc.Set(mdxIndentKey, st)
+	return st
+}
+
+// orphaned returns the columns consumed on line by blocks since closed.
+func (st *mdxIndentState) orphan(line int) int {
+	if st.line != line {
+		st.line, st.orphaned = line, 0
+	}
+	return st.orphaned
+}
+
+// mdxEatIndent consumes up to cols columns of indentation, or all of it
+// when cols is negative, and returns how many it consumed.
+func mdxEatIndent(reader text.Reader, cols int) int {
+	line, _ := reader.PeekLine()
+	w, _ := util.IndentWidth(line, reader.LineOffset())
+	if cols < 0 || cols > w {
+		cols = w
+	}
+	if cols == 0 || util.IsBlank(line) {
+		return 0
+	}
+	pos, padding := util.IndentPosition(line, reader.LineOffset(), cols)
+	reader.AdvanceAndSetPadding(pos, padding)
+	return cols
+}
+
+func (p mdxIndented) CanAcceptIndentedLine() bool { return true }
+
+func (p mdxIndented) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	lineNum, seg := reader.Position()
+	offset, indent := pc.BlockOffset(), pc.BlockIndent()
+	st := mdxIndentOf(pc)
+
+	eaten := 0
+	if indent > 3 {
+		eaten = mdxEatIndent(reader, -1)
+		line, _ := reader.PeekLine()
+		w, pos := util.IndentWidth(line, reader.LineOffset())
+		pc.SetBlockOffset(pos)
+		pc.SetBlockIndent(w)
+	}
+
+	node, state := p.BlockParser.Open(parent, reader, pc)
+	if node == nil {
+		reader.SetPosition(lineNum, seg)
+		pc.SetBlockOffset(offset)
+		pc.SetBlockIndent(indent)
+		return nil, state
+	}
+	if own := st.orphan(lineNum) + eaten; own > 0 {
+		st.owned[node] = own
+	}
+	return node, state
+}
+
+func (p mdxIndented) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+	st := mdxIndentOf(pc)
+	lineNum, _ := reader.Position()
+
+	eaten := 0
+	if own := st.owned[node]; own > 0 {
+		eaten = mdxEatIndent(reader, own)
+	}
+	state := p.BlockParser.Continue(node, reader, pc)
+	if state&parser.Continue == 0 {
+		st.orphan(lineNum)
+		st.orphaned += eaten
+	}
+	return state
+}
+
+func (p mdxIndented) Close(node ast.Node, reader text.Reader, pc parser.Context) {
+	p.BlockParser.Close(node, reader, pc)
+	delete(mdxIndentOf(pc).owned, node)
+}
 
 // mdxEsm matches the start of an ESM statement.
 var mdxEsm = regexp.MustCompile(`^(?:import|export)\b`)
@@ -261,8 +356,12 @@ func (*mdxFlowExprParser) Open(_ ast.Node, reader text.Reader, pc parser.Context
 	}
 
 	node := &mdxBlock{typ: "mdxFlowExpression"}
-	node.scan.scan(line[pos:])
-	node.finished = node.scan.depth <= 0 && !node.scan.comment
+	end := node.scan.scanExpr(line[pos:])
+	if end >= 0 && !util.IsBlank(line[pos+end:]) {
+		// Prose follows on the line: a text expression in a paragraph.
+		return nil, parser.NoChildren
+	}
+	node.finished = end >= 0
 	mdxConsume(node, reader)
 
 	return node, parser.NoChildren
@@ -275,8 +374,7 @@ func (*mdxFlowExprParser) Continue(node ast.Node, reader text.Reader, _ parser.C
 	}
 
 	line, _ := reader.PeekLine()
-	n.scan.scan(line)
-	n.finished = n.scan.depth <= 0 && !n.scan.comment
+	n.finished = n.scan.scanExpr(line) >= 0
 	mdxConsume(n, reader)
 
 	return parser.Continue | parser.NoChildren
@@ -285,7 +383,7 @@ func (*mdxFlowExprParser) Continue(node ast.Node, reader text.Reader, _ parser.C
 func (*mdxFlowExprParser) Close(ast.Node, text.Reader, parser.Context) {}
 
 func (*mdxFlowExprParser) CanInterruptParagraph() bool { return true }
-func (*mdxFlowExprParser) CanAcceptIndentedLine() bool { return false }
+func (*mdxFlowExprParser) CanAcceptIndentedLine() bool { return true }
 
 // An mdxJsxScan walks a JSX element to its end: tags are pushed and popped,
 // and `{...}` expressions -- in attributes or children -- are handed to an
@@ -486,6 +584,10 @@ type mdxJsxContainer struct {
 	// count against JSX quoted in a code fence.
 	depth  int
 	fenced bool
+
+	// spans are the source ranges of the element's own tags, which hold
+	// no prose.
+	spans [][2]int
 }
 
 var kindMdxJsxContainer = ast.NewNodeKind("MdxJsxContainer")
@@ -574,24 +676,58 @@ func (*mdxJsxFlowParser) Open(_ ast.Node, reader text.Reader, pc parser.Context)
 
 	if end < 0 {
 		// The open tag itself spans lines.
+		_, seg := reader.Position()
 		node := &mdxJsxContainer{pending: true}
 		node.jsx.scan(line[pos:])
 		node.raw.Write(line[pos:])
+		node.spans = append(node.spans, [2]int{seg.Start + pos, seg.Stop})
 		mdxAdvanceLine(reader, line)
 		return node, parser.HasChildren
 	}
 
 	if s.done || mdxDoneOnLine(s, line[pos+end:]) {
-		// The whole element sits on this line: keep it as code, the shape
-		// mdx2vast gave it.
+		if mdxHasText(line[pos+end:]) {
+			// Text beside the tags: MDX reads the line as a paragraph
+			// holding an inline element, so its text is prose.
+			return nil, parser.NoChildren
+		}
+		// The whole element sits on this line with nothing to lint.
 		node := &mdxBlock{typ: "mdxJsxFlowElement", finished: true}
 		mdxConsume(node, reader)
 		return node, parser.NoChildren
 	}
 
+	_, seg := reader.Position()
 	node := &mdxJsxContainer{name: s.stack[len(s.stack)-1]}
+	node.spans = append(node.spans, [2]int{seg.Start + pos, seg.Start + pos + end})
 	reader.Advance(pos + end)
 	return node, parser.HasChildren
+}
+
+// mdxHasText reports whether rest holds text outside its tags and
+// expressions.
+func mdxHasText(rest []byte) bool {
+	for i := 0; i < len(rest); {
+		switch {
+		case rest[i] == '<':
+			end := mdxTagEnd(rest[i:], &mdxJsxScan{})
+			if end < 0 {
+				return false
+			}
+			i += end
+		case rest[i] == '{':
+			n := (&mdxScan{}).scanExpr(rest[i:])
+			if n < 0 {
+				return false
+			}
+			i += n
+		case !util.IsSpace(rest[i]):
+			return true
+		default:
+			i++
+		}
+	}
+	return false
 }
 
 // mdxDoneOnLine reports whether the element completes in the rest of its
@@ -614,13 +750,14 @@ func (*mdxJsxFlowParser) Continue(node ast.Node, reader text.Reader, _ parser.Co
 		return parser.Close
 	}
 
-	line, _ := reader.PeekLine()
+	line, seg := reader.PeekLine()
 
 	if n.pending {
 		end := mdxTagEnd(line, &n.jsx)
 		if end < 0 {
 			n.jsx.scan(line)
 			n.raw.Write(line)
+			n.spans = append(n.spans, [2]int{seg.Start, seg.Stop})
 			mdxAdvanceLine(reader, line)
 			return parser.Continue | parser.HasChildren
 		}
@@ -628,11 +765,13 @@ func (*mdxJsxFlowParser) Continue(node ast.Node, reader text.Reader, _ parser.Co
 			// Childless after all: a multiline self-closing element.
 			n.raw.Write(bytes.TrimRight(line, "\n"))
 			n.rawOnly = true
+			n.spans = append(n.spans, [2]int{seg.Start, seg.Stop})
 			mdxAdvanceLine(reader, line)
 			return parser.Close
 		}
 		n.pending = false
 		n.name = n.jsx.stack[len(n.jsx.stack)-1]
+		n.spans = append(n.spans, [2]int{seg.Start, seg.Start + end})
 		reader.Advance(end)
 		return parser.Continue | parser.HasChildren
 	}
@@ -644,6 +783,7 @@ func (*mdxJsxFlowParser) Continue(node ast.Node, reader text.Reader, _ parser.Co
 	} else if !n.fenced {
 		if mdxIsCloseTag(trimmed, n.name) {
 			if n.depth == 0 {
+				n.spans = append(n.spans, [2]int{seg.Start, seg.Stop})
 				mdxAdvanceLine(reader, line)
 				return parser.Close
 			}
@@ -659,7 +799,7 @@ func (*mdxJsxFlowParser) Continue(node ast.Node, reader text.Reader, _ parser.Co
 func (*mdxJsxFlowParser) Close(ast.Node, text.Reader, parser.Context) {}
 
 func (*mdxJsxFlowParser) CanInterruptParagraph() bool { return true }
-func (*mdxJsxFlowParser) CanAcceptIndentedLine() bool { return false }
+func (*mdxJsxFlowParser) CanAcceptIndentedLine() bool { return true }
 
 // An mdxInline is an inline MDX node: a text expression, a self-closing JSX
 // element -- both rendered as code spans -- or one tag of a JSX element
@@ -673,6 +813,8 @@ type mdxInline struct {
 
 	form int    // 0 code, 1 an open tag, 2 a close tag
 	name string // the tag's name, for form 1
+
+	span [2]int // the source range of the tag or expression
 }
 
 var kindMdxInline = ast.NewNodeKind("MdxInline")
@@ -735,17 +877,18 @@ func mdxParseInline(block text.Reader, typ string, newJsx func() *mdxJsxScan) as
 			}
 			collected = append(collected, line[:end]...)
 			block.Advance(end)
-			return mdxInlineTag(collected, jsx)
+			node := mdxInlineTag(collected, jsx)
+			_, at := block.Position()
+			node.span = [2]int{pos.Start, at.Start}
+			return node
 		}
 
-		js.scan(line)
-		if js.depth <= 0 && !js.comment && js.quote == 0 {
-			// Find how much of the line the expression actually used: rescan
-			// from a fresh state to the closing position.
-			used := mdxEndOn(line, collected)
+		if used := js.scanExpr(line); used >= 0 {
 			collected = append(collected, line[:used]...)
 			block.Advance(used)
-			return &mdxInline{typ: typ, text: bytes.TrimRight(collected, "\n")}
+			_, at := block.Position()
+			return &mdxInline{typ: typ, text: bytes.TrimRight(collected, "\n"),
+				span: [2]int{pos.Start, at.Start}}
 		}
 
 		collected = append(collected, line...)
@@ -756,7 +899,7 @@ func mdxParseInline(block text.Reader, typ string, newJsx func() *mdxJsxScan) as
 // mdxInlineTag builds the node for one completed inline tag: an open tag is
 // a span whose children follow as prose, a close tag ends one, and a
 // self-closing element stays a code span.
-func mdxInlineTag(collected []byte, jsx *mdxJsxScan) ast.Node {
+func mdxInlineTag(collected []byte, jsx *mdxJsxScan) *mdxInline {
 	node := &mdxInline{typ: "mdxJsxTextElement", text: bytes.TrimRight(collected, "\n")}
 
 	switch {
@@ -767,21 +910,6 @@ func mdxInlineTag(collected []byte, jsx *mdxJsxScan) ast.Node {
 		node.name = jsx.stack[len(jsx.stack)-1]
 	}
 	return node
-}
-
-// mdxEndOn returns the offset just past the expression's closing brace on
-// the line that completes it, by rescanning that line with the state carried
-// in from the earlier lines.
-func mdxEndOn(line []byte, carried []byte) int {
-	s := mdxScan{}
-	s.scan(carried)
-	for i := 0; i < len(line); i++ {
-		s.scan(line[i : i+1])
-		if s.depth <= 0 && !s.comment && s.quote == 0 {
-			return i + 1
-		}
-	}
-	return len(line)
 }
 
 type mdxRenderer struct{}
@@ -869,12 +997,59 @@ func renderMdxInline(w util.BufWriter, _ []byte, node ast.Node, entering bool) (
 		}
 	case 2:
 		_, _ = w.WriteString("</span>")
+	case 0:
+		if n.typ == "mdxTextExpression" && isMdxComment(n.text) {
+			_, _ = w.WriteString("<!--")
+			_, _ = w.Write(n.text[3 : len(n.text)-3])
+			_, _ = w.WriteString("-->")
+			return ast.WalkContinue, nil
+		}
+		fallthrough
 	default:
 		_, _ = w.WriteString(`<code class="mdxNode ` + n.typ + `">`)
 		_, _ = w.Write(util.EscapeHTML(n.text))
 		_, _ = w.WriteString("</code>")
 	}
 	return ast.WalkContinue, nil
+}
+
+// mdxTagMasks returns the source ranges of the JSX tags in doc. An alert
+// is placed by searching the source for its text, and a tag is the one
+// piece of source the walker never sees, so its attributes are still there
+// to be found unless they are blanked.
+func mdxTagMasks(doc ast.Node) [][2]int {
+	var spans [][2]int
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := n.(type) {
+		case *mdxJsxContainer:
+			spans = append(spans, n.spans...)
+		case *mdxInline:
+			if n.form != 0 && n.span[1] > n.span[0] {
+				spans = append(spans, n.span)
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return spans
+}
+
+// maskSpans blanks the spans of content, byte for byte, keeping newlines.
+func maskSpans(content string, spans [][2]int) string {
+	if len(spans) == 0 {
+		return content
+	}
+	b := []byte(content)
+	for _, s := range spans {
+		for i := max(s[0], 0); i < s[1] && i < len(b); i++ {
+			if b[i] != '\n' {
+				b[i] = ' '
+			}
+		}
+	}
+	return string(b)
 }
 
 // lintMDX lints MDX: Markdown, parsed with the MDX constructs.

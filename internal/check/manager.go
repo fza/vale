@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 
+	"github.com/andybalholm/cascadia"
 	"golang.org/x/exp/maps"
 
 	"github.com/vale-cli/vale/v3/internal/core"
@@ -23,6 +25,8 @@ type Manager struct {
 	Config *core.Config
 
 	scopes       map[string]struct{}
+	scopeRules   map[string][]string
+	docs         map[string]cascadia.Sel
 	rules        map[string]Rule
 	styles       []string
 	needsTagging bool
@@ -36,8 +40,10 @@ func NewManager(config *core.Config) (*Manager, error) {
 	mgr := Manager{
 		Config: config,
 
-		rules:  make(map[string]Rule),
-		scopes: make(map[string]struct{}),
+		rules:      make(map[string]Rule),
+		scopes:     make(map[string]struct{}),
+		scopeRules: make(map[string][]string),
+		docs:       make(map[string]cascadia.Sel),
 	}
 
 	// TODO: Should we only load these if we're using them?
@@ -61,14 +67,15 @@ func NewManager(config *core.Config) (*Manager, error) {
 		parts := strings.Split(chk, ".")
 		if !mgr.hasStyle(parts[0]) {
 			// If this rule isn't part of an already-loaded style, we load it
-			// individually.
-			fName := parts[1] + ".yml"
+			// individually. Every segment after the style is a path
+			// component: `Std.dates.TimeFormat` is `Std/dates/TimeFormat.yml`.
+			fName := filepath.Join(parts[1:]...) + ".yml"
 			for _, p := range mgr.Config.SearchPaths() {
 				path = filepath.Join(p, parts[0], fName)
 				if !system.FileExists(path) {
 					continue
 				}
-				if err = mgr.addRuleFromSource(fName, path); err != nil {
+				if err = mgr.addCheckFile(chk, path); err != nil {
 					return &mgr, err
 				}
 			}
@@ -88,6 +95,31 @@ func (mgr *Manager) AddRule(name string, rule Rule) error {
 	return fmt.Errorf("the rule '%s' has already been added", name)
 }
 
+// RuleForAlert maps an alert's check name back to the rule that defines it.
+//
+// Most alerts carry their rule's name already. A `consistency` rule names its
+// alerts `Style.Rule.<term>`, and a rule may itself sit in a subdirectory
+// (`Std.dates.TimeFormat`), so neither dot-counting nor position says where
+// the rule ends: the longest known prefix does. An unknown name falls back to
+// its first two segments, which is the historical reading (see #129).
+func (mgr *Manager) RuleForAlert(name string) string {
+	if _, ok := mgr.rules[name]; ok {
+		return name
+	}
+
+	for prefix := name; strings.Contains(prefix, "."); {
+		prefix = prefix[:strings.LastIndex(prefix, ".")]
+		if _, ok := mgr.rules[prefix]; ok {
+			return prefix
+		}
+	}
+
+	if parts := strings.Split(name, "."); len(parts) > 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return name
+}
+
 // AddRuleFromFile adds the given rule to the manager.
 func (mgr *Manager) AddRuleFromFile(name, path string) error {
 	content, err := os.ReadFile(path)
@@ -102,10 +134,33 @@ func (mgr *Manager) Rules() map[string]Rule {
 	return mgr.rules
 }
 
+// A Selection is a `doc(...)` selector some rule declares, and the class the
+// walker gives the elements it matches.
+type Selection struct {
+	ID  string
+	Sel cascadia.Sel
+}
+
+// Selections returns every selector the loaded rules declare, in a stable
+// order.
+func (mgr *Manager) Selections() []Selection {
+	found := make([]Selection, 0, len(mgr.docs))
+	for id, sel := range mgr.docs {
+		found = append(found, Selection{ID: id, Sel: sel})
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].ID < found[j].ID })
+	return found
+}
+
 // HasScope returns `true` if the manager has a rule that applies to `scope`.
 func (mgr *Manager) HasScope(scope string) bool {
 	_, found := mgr.scopes[scope]
 	return found
+}
+
+// RulesForScope names the rules whose scope asks for `scope` blocks.
+func (mgr *Manager) RulesForScope(scope string) []string {
+	return mgr.scopeRules[scope]
 }
 
 // NeedsTagging indicates if POS tagging is needed.
@@ -159,6 +214,13 @@ func (mgr *Manager) addStyle(path string) error {
 		switch {
 		case err != nil:
 			return err
+		case info.IsDir() && fp != path &&
+			(strings.HasPrefix(info.Name(), ".") || strings.HasPrefix(info.Name(), "_")):
+			// A subdirectory joins its rules' names, which means YAML parked
+			// under a style -- drafts, retired rules -- now loads. A dot or
+			// underscore prefix keeps a directory inert, the same convention
+			// the Go toolchain and the test-file walk use.
+			return filepath.SkipDir
 		case info.IsDir() || !strings.HasSuffix(info.Name(), ".yml"):
 			return nil
 		case core.IsTestFile(info.Name()):
@@ -167,7 +229,13 @@ func (mgr *Manager) addStyle(path string) error {
 			// whole configuration stops. See #1122.
 			return nil
 		}
-		sources = append(sources, source{name: info.Name(), path: fp})
+
+		chkName, nErr := core.CheckName(path, fp)
+		if nErr != nil {
+			return nErr
+		}
+
+		sources = append(sources, source{name: chkName, path: fp})
 		return nil
 	})
 	if err != nil {
@@ -194,8 +262,7 @@ func (mgr *Manager) addStyle(path string) error {
 	sem := make(chan struct{}, compileWorkers())
 
 	for i, src := range sources {
-		style := filepath.Base(filepath.Dir(src.path))
-		chkName := style + "." + strings.Split(src.name, ".")[0]
+		chkName := src.name
 
 		// A rule already loaded under this name is not re-read: the first
 		// search path to define it wins, as before.
@@ -245,20 +312,14 @@ func (mgr *Manager) addStyle(path string) error {
 	return nil
 }
 
-func (mgr *Manager) addRuleFromSource(name, path string) error {
-	if strings.HasSuffix(name, ".yml") {
-		f, err := os.ReadFile(path)
-		if err != nil {
-			return core.NewE201FromPosition(err.Error(), path, 1)
-		}
+func (mgr *Manager) addCheckFile(chkName, path string) error {
+	f, err := os.ReadFile(path)
+	if err != nil {
+		return core.NewE201FromPosition(err.Error(), path, 1)
+	}
 
-		style := filepath.Base(filepath.Dir(path))
-		chkName := style + "." + strings.Split(name, ".")[0]
-		if _, ok := mgr.rules[chkName]; !ok {
-			if err = mgr.addCheck(f, chkName, path); err != nil {
-				return err
-			}
-		}
+	if _, ok := mgr.rules[chkName]; !ok {
+		return mgr.addCheck(f, chkName, path)
 	}
 	return nil
 }
@@ -283,6 +344,13 @@ func (mgr *Manager) compileCheck(file []byte, chkName, path string) (Rule, bool,
 		return nil, false, err
 	}
 
+	// An `extends` naming a rule rather than an extension point starts from
+	// that rule's definition; see inherit.go.
+	generic, err = mgr.flatten(generic, path, nil)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// Set default values, if necessary.
 	generic["name"] = chkName
 	generic["path"] = path
@@ -297,11 +365,20 @@ func (mgr *Manager) compileCheck(file []byte, chkName, path string) (Rule, bool,
 	} else if _, ok = generic["level"]; !ok {
 		generic["level"] = "warning"
 	}
+
+	// Scalar overrides from the configuration -- `Std.SentenceLength[max] =
+	// 30` -- land after inheritance and before the decoder, which coerces the
+	// string and rejects a parameter the rule does not have.
+	for param, val := range mgr.Config.RuleToParams[chkName] {
+		generic[param] = val
+	}
 	if scope, ok := generic["scope"]; scope == nil || !ok {
 		// Not for `sequence`, which needs to tell an unset scope from an
 		// explicit `text` one: it runs on sentences, and has to know whether
 		// the author asked for somewhere in particular to take them from.
-		if extends, _ := generic["extends"].(string); extends != "sequence" {
+		// Nor for the measuring checks, which default to the summary.
+		if extends, _ := generic["extends"].(string); extends != "sequence" &&
+			extends != "metric" && extends != "readability" {
 			generic["scope"] = []string{"text"}
 		}
 	}
@@ -322,12 +399,20 @@ func (mgr *Manager) compileCheck(file []byte, chkName, path string) (Rule, bool,
 // does. Reading the whole chain as one name left HasScope false, splitting
 // off, and the rule silently matching nothing. See #1133.
 //
-// A negated term asks for a family's absence, which needs nothing built.
+// A negated term asks for a family's absence, which needs nothing built,
+// except for an inline element: leaving `~link` out of a block needs the
+// links captured.
 func scopeBases(s string) []string {
 	bases := []string{}
-	for _, part := range strings.Split(s, "&") {
+	for _, part := range splitOutside(s, '&') {
 		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "~") {
+		if strings.HasPrefix(part, "doc(") {
+			continue
+		}
+		if negated := strings.HasPrefix(part, "~"); negated {
+			if base := strings.TrimPrefix(part, "~"); inlineScopes[base] {
+				bases = append(bases, base)
+			}
 			continue
 		}
 		bases = append(bases, strings.Split(part, ".")[0])
@@ -340,6 +425,22 @@ func (mgr *Manager) registerCheck(chkName string, rule Rule, taggedPOS bool) err
 	for _, s := range rule.Fields().Scope {
 		for _, base := range scopeBases(s) {
 			mgr.scopes[base] = struct{}{}
+			if !core.StringInSlice(chkName, mgr.scopeRules[base]) {
+				mgr.scopeRules[base] = append(mgr.scopeRules[base], chkName)
+			}
+		}
+		for id, sel := range DocSelectors(s) {
+			if _, seen := mgr.docs[id]; seen {
+				continue
+			}
+			compiled, err := compileSelector(sel)
+			if err != nil {
+				return core.NewE201FromTarget(
+					fmt.Sprintf("invalid selector in 'doc(...)': %s", err),
+					"scope",
+					chkName)
+			}
+			mgr.docs[id] = compiled
 		}
 	}
 
@@ -438,7 +539,7 @@ func (mgr *Manager) loadStyles(styles []string) error {
 func vocabSpellings(tokens []string) map[string]string {
 	swap := make(map[string]string, len(tokens))
 	for _, term := range tokens {
-		key := strings.ToLower(term)
+		key := termPattern(strings.ToLower(term))
 		if seen, ok := swap[key]; ok && seen != term {
 			swap[key] = seen + "|" + term
 			continue
@@ -449,30 +550,60 @@ func vocabSpellings(tokens []string) map[string]string {
 }
 
 func (mgr *Manager) loadVocabRules() {
-	if len(mgr.Config.AcceptedTokens) > 0 && mgr.enabledSomewhere("Vale.Terms") {
-		vocab := defaultRules["Terms"]
-		swap := vocab["swap"].(map[string]string)
-		for key, term := range vocabSpellings(mgr.Config.AcceptedTokens) {
-			swap[key] = term
-		}
-		if level, ok := mgr.Config.RuleToLevel["Vale.Terms"]; ok {
-			vocab["level"] = level
-		}
-		rule, _ := buildRule(mgr.Config, vocab)
-		mgr.rules["Vale.Terms"] = rule
-	}
+	mgr.addTerms("Vale.Terms", mgr.Config.AcceptedTokens)
+	mgr.addAvoid("Vale.Avoid", mgr.Config.RejectedTokens)
 
-	if len(mgr.Config.RejectedTokens) > 0 && mgr.enabledSomewhere("Vale.Avoid") {
-		avoid := defaultRules["Avoid"]
-		for _, term := range mgr.Config.RejectedTokens {
-			avoid["tokens"] = append(avoid["tokens"].([]string), term)
+	// A vocabulary a section names gets rules of its own, which the
+	// configuration turns on only for that section's files.
+	for _, name := range mgr.Config.SectionVocabs() {
+		vocab := mgr.Config.Vocabularies[name]
+		if vocab == nil {
+			continue
 		}
-		if level, ok := mgr.Config.RuleToLevel["Vale.Avoid"]; ok {
-			avoid["level"] = level
-		}
-		rule, _ := buildRule(mgr.Config, avoid)
-		mgr.rules["Vale.Avoid"] = rule
+		mgr.addTerms("Vale."+name+".Terms", vocab.Accepted)
+		mgr.addAvoid("Vale."+name+".Avoid", vocab.Rejected)
 	}
+}
+
+// addTerms adds a Terms rule, which reports an accepted term in the wrong
+// case, from the given terms.
+func (mgr *Manager) addTerms(name string, terms []string) {
+	// Compiling a vocabulary into one pattern is not free, and a vocabulary
+	// rule answers to `Vale.Terms = NO` the same way a style's rule does.
+	if len(terms) == 0 || !mgr.enabledSomewhere(name) {
+		return
+	}
+	swap := vocabSpellings(terms)
+	vocab := cloneRule(defaultRules["Terms"])
+	vocab["name"], vocab["swap"] = name, swap
+	if level, ok := mgr.Config.RuleToLevel[name]; ok {
+		vocab["level"] = level
+	}
+	rule, _ := buildRule(mgr.Config, vocab)
+	if sub, ok := rule.(Substitution); ok {
+		sub.terms = true
+		rule = sub
+	}
+	mgr.rules[name] = rule
+}
+
+// addAvoid adds an Avoid rule, which reports a rejected term, from the
+// given terms.
+func (mgr *Manager) addAvoid(name string, terms []string) {
+	if len(terms) == 0 || !mgr.enabledSomewhere(name) {
+		return
+	}
+	tokens := make([]string, 0, len(terms))
+	for _, term := range terms {
+		tokens = append(tokens, termPattern(term))
+	}
+	avoid := cloneRule(defaultRules["Avoid"])
+	avoid["name"], avoid["tokens"] = name, tokens
+	if level, ok := mgr.Config.RuleToLevel[name]; ok {
+		avoid["level"] = level
+	}
+	rule, _ := buildRule(mgr.Config, avoid)
+	mgr.rules[name] = rule
 }
 
 func (mgr *Manager) hasStyle(name string) bool {
@@ -490,6 +621,15 @@ func (mgr *Manager) hasStyle(name string) bool {
 func (mgr *Manager) enabledSomewhere(name string) bool {
 	cfg := mgr.Config
 	style := core.StyleName(name)
+
+	// A rule built from a vocabulary a section names is off globally by
+	// design and switched on for that section's files alone, which no setting
+	// in the configuration records. The global `false` it carries is that
+	// default rather than a disable, so reading it here would skip a rule the
+	// run goes on to ask for.
+	if mgr.sectionVocabRule(name) {
+		return true
+	}
 
 	// Named on: decides wherever it is set, BasedOnStyles or not.
 	for _, sec := range cfg.SChecks {
@@ -517,6 +657,22 @@ func (mgr *Manager) enabledSomewhere(name string) bool {
 	}
 
 	return false
+}
+
+// sectionVocabRule reports whether name is a Terms or Avoid rule built from a
+// vocabulary some section names.
+func (mgr *Manager) sectionVocabRule(name string) bool {
+	style, rest, found := strings.Cut(name, ".")
+	if !found || style != "Vale" {
+		return false
+	}
+
+	vocab, kind, found := strings.Cut(rest, ".")
+	if !found || (kind != "Terms" && kind != "Avoid") {
+		return false
+	}
+
+	return core.StringInSlice(vocab, mgr.Config.SectionVocabs())
 }
 
 // checkSetting reads a rule's setting, falling back to its style's -- the

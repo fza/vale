@@ -141,3 +141,116 @@ func TestNormalizeDirective(t *testing.T) {
 		})
 	}
 }
+
+// TestDirectiveRegions verifies the position-aware half of comment handling:
+// a directive whose offset is known records a region, and a located alert
+// inside it is suppressed -- by its own name, its style, or a match key --
+// while one before the NO, after the YES, or from another check is not.
+func TestDirectiveRegions(t *testing.T) {
+	f := &File{Comments: map[string]bool{}}
+	f.SetText("one\ntwo <!-- vale T.Rule = NO -->\nthree\n<!-- vale T.Rule = YES --> four\n")
+
+	noAt := len("one\ntwo <!-- ")
+	yesAt := len("one\ntwo <!-- vale T.Rule = NO -->\nthree\n<!-- ")
+
+	f.UpdateCommentsAt("vale T.Rule = NO", noAt)
+	f.UpdateCommentsAt("vale T.Rule = YES", yesAt)
+
+	if f.RegionDisabled("T.Rule", "", 1, 1) {
+		t.Error("suppressed before the NO")
+	}
+	if !f.RegionDisabled("T.Rule", "", 3, 1) {
+		t.Error("not suppressed inside the region")
+	}
+	if f.RegionDisabled("T.Rule", "", 4, 30) {
+		t.Error("suppressed after the YES")
+	}
+	if f.RegionDisabled("T.Other", "", 3, 1) {
+		t.Error("suppressed another rule")
+	}
+
+	// A style-level directive covers every rule in the style, and an
+	// unclosed region runs to the end of the file.
+	f.UpdateCommentsAt("vale T = NO", yesAt+40)
+	if !f.RegionDisabled("T.Other", "", 99, 1) {
+		t.Error("style-level region did not cover the rule")
+	}
+
+	// An unknown position records nothing.
+	g := &File{Comments: map[string]bool{}}
+	g.SetText("text\n")
+	g.UpdateCommentsAt("vale T.Rule = NO", -1)
+	if g.RegionDisabled("T.Rule", "", 1, 1) {
+		t.Error("recorded a region without a position")
+	}
+}
+
+// An empty BasedOnStyles resets what a file inherited, its own keys still
+// apply after it, and UNSET drops one inherited key.
+func TestNewFileEmptyStylesResetAndUnset(t *testing.T) {
+	root := t.TempDir()
+	ini := "StylesPath = " + root + "\n\n" +
+		"[*]\nGoogle.Semicolons = warning\nVale.Spelling = NO\n\n" +
+		"[*.md]\nBasedOnStyles = Google\nGoogle.Colons = NO\n\n" +
+		"[**/docs/*.md]\nBasedOnStyles =\nGoogle.Headings = YES\n\n" +
+		"[**/api/*.md]\nGoogle.Colons = UNSET\n"
+
+	cfg, err := NewConfig(&CLIFlags{IgnoreGlobal: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = FromString(ini, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+
+	open := func(dir string) *File {
+		t.Helper()
+		if err = os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, dir, "page.md")
+		if err = os.WriteFile(path, []byte("Hello.\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, ferr := NewFile(path, cfg)
+		if ferr != nil {
+			t.Fatal(ferr)
+		}
+		return f
+	}
+
+	other := open("other")
+	if len(other.BaseStyles) != 1 || other.BaseStyles[0] != "Google" {
+		t.Errorf("other: BaseStyles = %v, want [Google]", other.BaseStyles)
+	}
+	if v, ok := other.Checks["Google.Colons"]; !ok || v {
+		t.Errorf("other: Google.Colons = %v, %v; want false, true", v, ok)
+	}
+
+	docs := open("docs")
+	if len(docs.BaseStyles) != 0 {
+		t.Errorf("docs: BaseStyles = %v, want none", docs.BaseStyles)
+	}
+	for _, k := range []string{"Google.Semicolons", "Vale.Spelling"} {
+		if v, ok := docs.Checks[k]; !ok || v {
+			t.Errorf("docs: %s = %v, %v; want false, true (global setting turned off)", k, v, ok)
+		}
+	}
+	if _, ok := docs.Checks["Google.Colons"]; ok {
+		t.Error("docs: Google.Colons was inherited past an empty BasedOnStyles")
+	}
+	if v, ok := docs.Checks["Google.Headings"]; !ok || !v {
+		t.Errorf("docs: Google.Headings = %v, %v; want true, true (set after the reset)", v, ok)
+	}
+
+	api := open("api")
+	if _, ok := api.Checks["Google.Colons"]; ok {
+		t.Error("api: Google.Colons survived UNSET")
+	}
+	if !api.Unset["Google.Colons"] {
+		t.Error("api: Google.Colons is not marked unset")
+	}
+	if len(api.BaseStyles) != 1 || api.BaseStyles[0] != "Google" {
+		t.Errorf("api: BaseStyles = %v, want [Google]", api.BaseStyles)
+	}
+}

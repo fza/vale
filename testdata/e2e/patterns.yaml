@@ -57,6 +57,50 @@ cases:
       test3.html:30:75:write-good.We:Try to avoid using first-person plural like 'us'.
       test3.html:33:64:write-good.We:Try to avoid using first-person plural like 'us'.
 
+  - name: html-template
+    about: "Text with no element of its own -- a template language's tags --
+      is excluded by pattern. A BlockIgnores match is wrapped in `<pre>` and a
+      TokenIgnores match in `<code>`, so the prose around them is linted and
+      the tags, and any string inside one, are not."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.html]
+        BasedOnStyles = T
+        BlockIgnores = (?s)({%\s*comment\s*%}.*?{%\s*endcomment\s*%})
+        TokenIgnores = ({{.*?}}), ({%.*?%}), ({#.*?#})
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        nonword: true
+        raw:
+          - (?:ZQX|QQV|\{[{%#]|[}%#]\})
+      page.html: |
+        {% comment %}A ZQX could look like this.{% endcomment %}
+        {# Or like this, ZQX. #}
+        <p>And some QQV content</p>
+        <p>With a {{ variable.ZQX.somewhere }}.</p>
+        <p>{% translate "Or translated ZQX content" %}</p>
+        <p>
+          {% blocktranslate %}
+            For longer stuff or if there's {{ ZQX }}.
+            QQV.
+          {% endblocktranslate %}
+        </p>
+        <p>
+          And the final QQV I'll pull from the docs directly:
+          {% some_tag _("Page not ZQX") value|yesno:_("yes,no") %}
+        </p>
+    args: page.html
+    exit: 1
+    want: |
+      page.html:3:13:T.Tok:'QQV' found
+      page.html:9:5:T.Tok:'QQV' found
+      page.html:13:17:T.Tok:'QQV' found
+
   - name: python
     args: test.py
     exit: 1
@@ -130,6 +174,37 @@ cases:
     want: |
       guides/b.md:1:15:T.Tok:'ZQX' found
       tutorials/a.md:1:27:T.Tok:'QQV' found
+
+  - name: ignores-keep-escaped-commas
+    about: "#1164 -- a comma escaped as `\\,` stays inside its pattern, so a
+      quantifier like `{2,}` survives; a bare comma still separates patterns"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BlockIgnores = BEGIN.{2\,}END
+
+        [*.md]
+        BasedOnStyles = T
+        TokenIgnores = \b[a-z]{2\,}QQV\b, (<http[^\n]+>+?)
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        nonword: true
+        raw:
+          - (?:ZQX|QQV)
+      a.md: |
+        Ignored abQQV and <http://ZQX.example>, but QQV is not.
+
+        BEGIN and ZQX inside END, but ZQX outside.
+    args: a.md
+    exit: 1
+    want: |
+      a.md:1:45:T.Tok:'QQV' found
+      a.md:3:31:T.Tok:'ZQX' found
 
   - name: repeated-autolink
     about: "#847 -- an autolink's URL is one run of source, reported twice by

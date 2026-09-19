@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jdkato/prose/v3/summarize"
 	"github.com/jdkato/prose/v3/tag"
@@ -87,6 +88,8 @@ type File struct {
 	Transform  string            // XLST transform
 	RealExt    string            // actual file extension
 	Checks     map[string]bool   // syntax-specific checks assigned in .vale
+	Unset      map[string]bool   // keys a section marked UNSET; no global setting applies
+	Vocab      []string          // vocabularies the file's sections name
 	ChkToCtx   map[string]string // maps a temporary context to a particular check
 
 	// Levels holds the level each rule was given by the sections matching this
@@ -103,6 +106,7 @@ type File struct {
 	// sanShifts records, per line, where the sanitizer's `&rsquo;` rewrite
 	// shortened the text, so spans can be mapped back to the file's bytes.
 	sanShifts  map[int][]int
+	regions    map[string][]commentRegion // spans covered by comment directives
 	Comments   map[string]bool            // comment control statements
 	Metrics    map[string]int             // count-based metrics
 	history    map[string]int             // -
@@ -113,6 +117,17 @@ type File struct {
 	simple     bool                       // -
 	Lookup     bool                       // -
 	MetaScope  string                     // extra scope context, e.g. a YAML key or comment
+
+	// The running column count byteLoc keeps: the context and line start it
+	// was taken in, the byte offset it reached, and the runes up to there.
+	colCtx   string
+	colLine  int
+	colAt    int
+	colRunes int
+
+	// Scoped holds the text of every value a View found, by scope name, so
+	// a rule can ask about a scope other than the one it runs in.
+	Scoped map[string][]string
 }
 
 // lineStarts returns the byte offset at which each line of ctx begins.
@@ -171,29 +186,55 @@ func NewFile(src string, config *Config) (*File, error) {
 	}
 
 	filepaths := []string{path}
-	normed := system.ReplaceFileExt(path, config.Formats)
+	normed := NormalizePath(path, config.Formats)
 
 	baseStyles := config.GBaseStyles
 	checks := make(map[string]bool)
 	levels := make(map[string]string)
+	unset := make(map[string]bool)
+	var vocab []string
 
+	// Sections are visited in the order they were written, so a later one
+	// wins -- for this file, and no other. See #965.
 	for _, fp := range filepaths {
-		for _, sec := range config.StyleKeys {
-			if pat, found := config.SecToPat[sec]; found && pat.Match(fp) {
-				baseStyles = config.SBaseStyles[sec]
-			}
-		}
-
 		for _, sec := range config.RuleKeys {
-			if pat, found := config.SecToPat[sec]; found && pat.Match(fp) {
-				for k, v := range config.SChecks[sec] {
-					checks[k] = v
+			pat, found := config.SecToPat[sec]
+			if !found || !pat.Match(fp) {
+				continue
+			}
+
+			if styles, declared := config.SBaseStyles[sec]; declared {
+				baseStyles = styles
+				if len(styles) == 0 {
+					// `BasedOnStyles =` says nothing runs here: earlier
+					// sections no longer apply, and global settings are off.
+					checks = make(map[string]bool)
+					levels = make(map[string]string)
+					unset = make(map[string]bool)
+					for k := range config.GChecks {
+						checks[k] = false
+					}
 				}
-				// Sections are visited in the order they were written, so a
-				// later one wins -- for this file, and no other. See #965.
-				for k, v := range config.SLevels[sec] {
-					levels[k] = v
+			}
+
+			for k, v := range config.SChecks[sec] {
+				checks[k] = v
+				delete(unset, k)
+			}
+			for k, v := range config.SLevels[sec] {
+				levels[k] = v
+			}
+			for _, k := range config.SUnsets[sec] {
+				delete(checks, k)
+				delete(levels, k)
+				unset[k] = true
+			}
+			for _, name := range config.SVocab[sec] {
+				if !StringInSlice(name, vocab) {
+					vocab = append(vocab, name)
 				}
+				checks["Vale."+name+".Terms"] = true
+				checks["Vale."+name+".Avoid"] = true
 			}
 		}
 	}
@@ -235,7 +276,7 @@ func NewFile(src string, config *Config) (*File, error) {
 
 	file := File{
 		NormedExt: ext, Format: format, RealExt: filepath.Ext(path),
-		BaseStyles: baseStyles, Checks: checks, Levels: levels,
+		BaseStyles: baseStyles, Checks: checks, Levels: levels, Unset: unset, Vocab: vocab,
 		Lines: lines, Content: content,
 		Comments: make(map[string]bool), history: make(map[string]int),
 		simple: config.Flags.Simple, Transform: transform,
@@ -319,14 +360,19 @@ func (f *File) SortedAlerts() []Alert {
 
 // ComputeMetrics returns all of f's metrics.
 func (f *File) ComputeMetrics() (map[string]interface{}, error) {
+	return BlockMetrics(summarize.NewDocument(f.Summary.String()), f.Metrics), nil
+}
+
+// BlockMetrics computes the metrics of one block: doc's counts plus the
+// elements it holds. Empty when the text has no words.
+func BlockMetrics(doc *summarize.Document, counts map[string]int) map[string]interface{} {
 	params := map[string]interface{}{}
 
-	doc := summarize.NewDocument(f.Summary.String())
 	if doc.NumWords == 0 {
-		return params, nil
+		return params
 	}
 
-	for k, v := range f.Metrics {
+	for k, v := range counts {
 		if strings.HasPrefix(k, "table") {
 			continue
 		}
@@ -334,6 +380,11 @@ func (f *File) ComputeMetrics() (map[string]interface{}, error) {
 		params[k] = float64(v)
 	}
 
+	addTextMetrics(params, doc)
+	return params
+}
+
+func addTextMetrics(params map[string]interface{}, doc *summarize.Document) {
 	params["complex_words"] = doc.NumComplexWords
 	params["long_words"] = doc.NumLongWords
 	params["sentences"] = doc.NumSentences
@@ -341,26 +392,29 @@ func (f *File) ComputeMetrics() (map[string]interface{}, error) {
 	params["words"] = doc.NumWords
 	params["polysyllabic_words"] = doc.NumPolysylWords
 	params["syllables"] = doc.NumSyllables
-
-	return params, nil
 }
 
 // FindLoc calculates the line and span of an Alert.
 //
 // `at` is where `s` begins in `ctx`, or -1 when that is not known; it lets the
 // match be placed without searching for it.
-func (f *File) FindLoc(ctx, s string, pad, count int, a Alert, at int) (int, []int) {
+func (f *File) FindLoc(ctx, s string, pad, count int, a Alert, at int) (int, []int, int) {
 	var length int
 	var lines []string
 
+	given := len(ctx)
 	for _, s := range a.Offset {
 		ctx, _ = Substitute(ctx, s, '@')
 	}
 
-	pos, substring := initialPosition(ctx, s, a, at)
+	pos, substring, hit := locateMatch(ctx, s, a, at)
 	if pos < 0 {
 		// Shouldn't happen ...
-		return pos, []int{0, 0}
+		return pos, []int{0, 0}, -1
+	}
+	if hit >= 0 {
+		// The Offset masks above map rune to rune; the tail keeps its place.
+		hit += given - len(ctx)
 	}
 
 	loc := a.Span
@@ -382,12 +436,12 @@ func (f *File) FindLoc(ctx, s string, pad, count int, a Alert, at int) (int, []i
 			} else if loc[1] <= 0 {
 				loc[1] = 1
 			}
-			return count - (len(lines) - (idx + 1)), loc
+			return count - (len(lines) - (idx + 1)), loc, hit
 		}
 		counter += length
 	}
 
-	return count, loc
+	return count, loc, hit
 }
 
 func (f *File) assignLoc(ctx string, blk nlp.Block, pad int, a Alert) (int, []int) {
@@ -415,7 +469,7 @@ func (f *File) assignLoc(ctx string, blk nlp.Block, pad int, a Alert) (int, []in
 			}
 			// No offset hint: `masked` is a single line, so the block's own
 			// offset is measured against something else entirely.
-			pos, substring := initialPosition(masked, blk.Text, a, -1)
+			pos, substring := initialPosition(masked, blk.Text, a)
 
 			loc[0] = pos + pad
 			loc[1] = pos + nlp.StrLen(substring) - 1
@@ -447,15 +501,41 @@ func locFromByteOffset(ctx string, starts []int, begin, end, pad int) (int, []in
 	line := sort.Search(len(starts), func(i int) bool { return starts[i] > begin })
 	lineStart := starts[line-1]
 
-	col := nlp.StrLen(ctx[lineStart:begin]) + 1 + pad
-	matchLen := nlp.StrLen(ctx[begin:end])
+	return line, spanAt(ctx, nlp.StrLen(ctx[lineStart:begin])+1+pad, begin, end)
+}
 
-	span := []int{col, col + matchLen - 1}
-	if span[1] <= 0 {
-		span[1] = 1
+// byteLoc is locFromByteOffset with the file's line index and a running column
+// count. Alerts arrive in document order, so on a long line each count picks
+// up where the last one stopped; counting from the line's start every time is
+// quadratic on a paragraph written as one line.
+func (f *File) byteLoc(ctx string, begin, end, pad int) (int, []int) {
+	if begin > len(ctx) {
+		begin = len(ctx)
 	}
 
-	return line, span
+	starts := f.lineStarts(ctx)
+	line := sort.Search(len(starts), func(i int) bool { return starts[i] > begin })
+	lineStart := starts[line-1]
+
+	// A count can only continue from a rune boundary: split inside one, the
+	// two halves each count as a rune.
+	if f.colCtx != ctx || f.colLine != lineStart || begin < f.colAt ||
+		(f.colAt < len(ctx) && !utf8.RuneStart(ctx[f.colAt])) {
+		f.colCtx, f.colLine, f.colAt, f.colRunes = ctx, lineStart, lineStart, 0
+	}
+	f.colRunes += nlp.StrLen(ctx[f.colAt:begin])
+	f.colAt = begin
+
+	return line, spanAt(ctx, f.colRunes+1+pad, begin, end)
+}
+
+// spanAt is the span of a match at column col that runs from begin to end.
+func spanAt(ctx string, col, begin, end int) []int {
+	span := []int{col, col + nlp.StrLen(ctx[begin:end]) - 1}
+	if span[1] < span[0] {
+		span[1] = span[0]
+	}
+	return span
 }
 
 // SetText updates the file's content, lines, and history.
@@ -475,6 +555,20 @@ func (f *File) SetText(s string) {
 	f.Content = s
 	f.Lines = strings.SplitAfter(s, "\n")
 	f.history = map[string]int{}
+}
+
+// RestoreText puts the file's text back after values were linted in its
+// place, keeping the alerts already reported from being reported again.
+func (f *File) RestoreText(s string) {
+	f.SetText(s)
+	for _, a := range f.Alerts {
+		f.history[historyKey(a)] = 1
+	}
+}
+
+// historyKey identifies an alert by where it was reported.
+func historyKey(a Alert) string {
+	return strings.Join([]string{strconv.Itoa(a.Line), strconv.Itoa(a.Span[0]), a.Check}, "-")
 }
 
 // SetNormedExt sets the normalized extension of a File.
@@ -497,10 +591,18 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 	//
 	// We use blk.Context (the original document) rather than ctx, which may
 	// have been modified by ChkToCtx substitutions from earlier alerts.
+	hit := -1 // where the match was found in ctx, for the mask below
 	switch {
 	case a.HasByteOffsets && a.Span[0] >= 0 && a.Span[1] <= len(blk.Context):
-		a.Line, a.Span = locFromByteOffset(
-			blk.Context, f.lineStarts(blk.Context), a.Span[0], a.Span[1], pad)
+		// Before the measurement case: a zero-width match has no text either,
+		// but it does have a place.
+		a.Line, a.Span = f.byteLoc(blk.Context, a.Span[0], a.Span[1], pad)
+	case a.Match == "" && blk.Line >= 0 && blk.Line < len(f.Lines):
+		// A measurement has no text to find. It is reported at the start of
+		// its block's first line: the file's for the summary, the heading's
+		// for a section, the paragraph's for a paragraph.
+		a.Line = blk.Line + 1
+		a.Span = []int{1, 1}
 	case strings.HasPrefix(blk.Scope, "raw") && a.Match != "" &&
 		a.Span[0] >= 0 && a.Span[1] <= len(blk.Context) &&
 		blk.Context[a.Span[0]:a.Span[1]] == a.Match:
@@ -511,8 +613,7 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 		// earlier occurrence; this replaces the capped word-masking heuristic
 		// that mislocated `^`-anchored matches once the document exceeded 1k
 		// bytes. See #869.
-		a.Line, a.Span = locFromByteOffset(
-			blk.Context, f.lineStarts(blk.Context), a.Span[0], a.Span[1], pad)
+		a.Line, a.Span = f.byteLoc(blk.Context, a.Span[0], a.Span[1], pad)
 	default:
 		// For non-raw scopes the block text differs from the source, so the
 		// span isn't a usable byte offset; fall back to a text search. When
@@ -543,8 +644,16 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 			a.Line, a.Span = f.assignLoc(ctx, blk, pad, a)
 		}
 		if (!lookup && a.Span[0] < 0) || lookup {
-			a.Line, a.Span = f.FindLoc(ctx, blk.Text, pad, lines, a, blk.Offset)
+			a.Line, a.Span, hit = f.FindLoc(ctx, blk.Text, pad, lines, a, blk.Offset)
 		}
+	}
+
+	// A directive inside the block has already cancelled out of the toggles
+	// shouldRun reads, but its recorded region still covers this location.
+	// Hidden rather than dropped: the masking below must still consume the
+	// occurrence, or the next alert from this check finds it again.
+	if !a.Hide && f.RegionDisabled(a.Check, a.Match, a.Line, a.Span[0]) {
+		a.Hide = true
 	}
 
 	if a.Span[0] > 0 {
@@ -554,18 +663,14 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 		// and skipping it avoids copying the whole context per alert, which
 		// dominated Vale's allocations.
 		if !a.HasByteOffsets {
-			f.ChkToCtx[a.Check], _ = Substitute(ctx, a.Match, '#')
+			f.ChkToCtx[a.Check] = maskMatch(ctx, a.Match, hit)
 			if f.chkMasked != nil {
 				f.chkMasked[a.Check+"\x00"+a.Match]++
 			}
 		}
 		if !a.Hide {
 			// Ensure that we're not double-reporting an Alert:
-			entry := strings.Join([]string{
-				strconv.Itoa(a.Line),
-				strconv.Itoa(a.Span[0]),
-				a.Check}, "-")
-
+			entry := historyKey(a)
 			if _, found := f.history[entry]; !found {
 				// Check rule-assigned limits for reporting:
 				count, occur := f.limits[a.Check]
@@ -582,26 +687,66 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 	}
 }
 
+// commentRegion is the span of the source between a comment directive that
+// turned a check off and the one that turned it back on. Positions are the
+// 1-based (line, column) pairs alerts carry, so a located alert compares
+// directly; an open region runs to the end of the file.
+type commentRegion struct {
+	begin [2]int
+	end   [2]int
+	open  bool
+}
+
+// DropDisabled removes the alerts that fall inside a comment region, for
+// the regions recorded after those alerts were added.
+func (f *File) DropDisabled() {
+	if len(f.regions) == 0 {
+		return
+	}
+	kept := f.Alerts[:0]
+	for _, a := range f.Alerts {
+		if !f.RegionDisabled(a.Check, a.Match, a.Line, a.Span[0]) {
+			kept = append(kept, a)
+		}
+	}
+	f.Alerts = kept
+}
+
 // UpdateComments sets a new status based on comment.
 func (f *File) UpdateComments(comment string) {
+	f.UpdateCommentsAt(comment, -1)
+}
+
+// UpdateCommentsAt sets a new status based on comment, which begins at byte
+// offset `off` of the file's content, or -1 when its position isn't known.
+//
+// The position is what lets a directive work inside a block. The toggles are
+// read once per block, so a NO/YES pair inside one paragraph -- which is what
+// a deep continuation indent makes of them, since an indent of four or more
+// past the list's content column fails CommonMark's HTML-block test and
+// leaves the comments inline -- has cancelled out by the time the paragraph
+// is linted. The recorded region suppresses the located alerts instead.
+func (f *File) UpdateCommentsAt(comment string, off int) {
+	// A region too, since a footnote's text is walked where the document
+	// renders it, at the end, not where it is written.
 	if comment == "vale off" { //nolint:gocritic
-		f.Comments["off"] = true
+		f.setComment("off", true, off)
 	} else if comment == "vale on" {
-		f.Comments["off"] = false
+		f.setComment("off", false, off)
 	} else if commentControlMatchesRE.MatchString(comment) {
 		check := commentControlMatchesRE.FindStringSubmatch(comment)
 		if len(check) == 4 {
 			var parts []string
 			if err := json.Unmarshal([]byte(check[2]), &parts); err == nil {
 				for i := range parts {
-					f.Comments[check[1]+"["+parts[i]+"]"] = check[3] == "NO"
+					f.setComment(check[1]+"["+parts[i]+"]", check[3] == "NO", off)
 				}
 			}
 		}
 	} else if commentControlRE.MatchString(comment) {
 		check := commentControlRE.FindStringSubmatch(comment)
 		if len(check) == 3 {
-			f.Comments[check[1]] = (check[2] == "NO" || check[2] == "off")
+			f.setComment(check[1], check[2] == "NO" || check[2] == "off", off)
 		}
 	} else if commentStyleRE.MatchString(comment) {
 		for _, style := range f.BaseStyles {
@@ -612,6 +757,62 @@ func (f *File) UpdateComments(comment string) {
 			f.Comments[style] = false
 		}
 	}
+}
+
+// setComment flips one directive key and, when the directive's position is
+// known, opens or closes the region it covers.
+func (f *File) setComment(key string, disabled bool, off int) {
+	f.Comments[key] = disabled
+	if off < 0 {
+		return
+	}
+	if off > len(f.Content) {
+		off = len(f.Content)
+	}
+
+	line, span := locFromByteOffset(f.Content, f.lineStarts(f.Content), off, off, 0)
+	at := [2]int{line, span[0]}
+
+	if disabled {
+		if n := len(f.regions[key]); n > 0 && f.regions[key][n-1].open {
+			return
+		}
+		if f.regions == nil {
+			f.regions = map[string][]commentRegion{}
+		}
+		f.regions[key] = append(f.regions[key], commentRegion{begin: at, open: true})
+	} else if n := len(f.regions[key]); n > 0 && f.regions[key][n-1].open {
+		f.regions[key][n-1].end = at
+		f.regions[key][n-1].open = false
+	}
+}
+
+// RegionDisabled reports whether a comment directive covers check at the
+// given location -- a 1-based line and column, as alerts carry them.
+func (f *File) RegionDisabled(check, match string, line, col int) bool {
+	if len(f.regions) == 0 {
+		return false
+	}
+
+	keys := []string{"off", check}
+	if style := StyleName(check); style != check {
+		keys = append(keys, style)
+	}
+	if match != "" {
+		keys = append(keys, check+"["+match+"]")
+	}
+
+	at := [2]int{line, col}
+	for _, key := range keys {
+		for _, r := range f.regions[key] {
+			after := r.begin[0] < at[0] || (r.begin[0] == at[0] && r.begin[1] <= at[1])
+			before := r.open || at[0] < r.end[0] || (at[0] == r.end[0] && at[1] < r.end[1])
+			if after && before {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // QueryComments checks if there has been an in-text comment for this check.

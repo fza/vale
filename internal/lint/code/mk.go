@@ -3,8 +3,8 @@ package code
 import (
 	"regexp"
 
-	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/smacker/go-tree-sitter/bash"
+	"github.com/vale-cli/vale/v3/internal/core"
 )
 
 // Makefile reads a build file's own comments.

@@ -1214,6 +1214,394 @@ cases:
     want: |
       test.mdx:7:13:T.Marker:'XXX' left in text
 
+  - name: mdx/expression-then-prose
+    about: "#1179 -- a `{...}` expression is a flow expression only when it
+      stands alone on its line. Followed by prose, the line is a paragraph
+      and the expression is inline; a comment renders as one. The expression
+      ends at its closing brace, so a link's `//` after it is prose."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        BasedOnStyles = Vale
+      test.mdx: |
+        ---
+        title: t
+        ---
+
+        {/* note */}Thiss paragraph startss with a comment.
+
+        Prose firstt, {/* note */}then a comment mid-line.
+
+        - {/* note */}bullett starting with a comment
+        - normall bullet
+
+        1. {/* note */}numberedd item
+      link.mdx: |
+        ---
+        title: t
+        ---
+
+        {/* note */}See [the docs](https://example.com/docs) for detailss.
+
+        Thiss paragraph is further down the page.
+
+        ## Headingg
+
+        Everythingg after the first paragraph is skipped.
+    args: --output=line --no-exit test.mdx link.mdx
+    exit: 0
+    want: |
+      link.mdx:5:58:Vale.Spelling:Did you really mean 'detailss'?
+      link.mdx:7:1:Vale.Spelling:Did you really mean 'Thiss'?
+      link.mdx:9:4:Vale.Spelling:Did you really mean 'Headingg'?
+      link.mdx:11:1:Vale.Spelling:Did you really mean 'Everythingg'?
+      test.mdx:5:13:Vale.Spelling:Did you really mean 'Thiss'?
+      test.mdx:5:29:Vale.Spelling:Did you really mean 'startss'?
+      test.mdx:7:7:Vale.Spelling:Did you really mean 'firstt'?
+      test.mdx:9:15:Vale.Spelling:Did you really mean 'bullett'?
+      test.mdx:10:3:Vale.Spelling:Did you really mean 'normall'?
+      test.mdx:12:16:Vale.Spelling:Did you really mean 'numberedd'?
+
+  - name: mdx/indented-blocks
+    about: "#1180 -- MDX has no indented code, so a fence, heading, or list
+      indented four or more spaces is what it says, at the top level and
+      under a component that indents its children the way Mintlify and
+      Starlight do."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        BasedOnStyles = Vale
+      fence.mdx: |
+        ---
+        title: t
+        ---
+
+        <Steps>
+          <Step title="Install">
+            Run:
+
+            ```bash
+            npm install
+
+            npx create-next-app
+            ```
+
+            The command creates a projectt directory.
+          </Step>
+        </Steps>
+      top.mdx: |2
+            ## Setupp
+
+            ```bash
+            npm install
+
+            npx create-next-app
+            ```
+
+            - firstt item
+            - secondd item
+    args: --output=line --no-exit fence.mdx top.mdx
+    exit: 0
+    want: |
+      fence.mdx:15:27:Vale.Spelling:Did you really mean 'projectt'?
+      top.mdx:1:8:Vale.Spelling:Did you really mean 'Setupp'?
+      top.mdx:9:7:Vale.Spelling:Did you really mean 'firstt'?
+      top.mdx:10:7:Vale.Spelling:Did you really mean 'secondd'?
+
+  - name: mdx/one-line-elements
+    about: "A JSX element that opens and closes on one line with text
+      between its tags is a paragraph holding an inline element, as MDX
+      reads it, so a callout's text is prose. Without text it stays code."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        BasedOnStyles = Vale
+      test.mdx: |
+        <Tip>Thiss suggests a helpful tip</Tip>
+
+        <Badge color="orange">Deprecatedd</Badge> since the lastt release.
+
+        <video src="introo.mp4"></video>
+
+        <Chart data={populationn} />
+    args: --output=line --no-exit test.mdx
+    exit: 0
+    want: |
+      test.mdx:1:6:Vale.Spelling:Did you really mean 'Thiss'?
+      test.mdx:3:23:Vale.Spelling:Did you really mean 'Deprecatedd'?
+      test.mdx:3:53:Vale.Spelling:Did you really mean 'lastt'?
+
+  - name: mdx/located-past-markup
+    about: "An alert is placed by searching the source for its text, and the
+      search skips JSX tags, expressions, ESM, and fenced code. A heading
+      that repeats its element's attribute lands on the heading, a table
+      header repeated after a fence is reported each time, and a heading
+      with a custom-id expression is reported where it is."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        BasedOnStyles = Vale
+      test.mdx: |
+        <Update label="x" rss={{ title:"Notificationn preferences" }}>
+
+          ## Notificationn preferences
+
+        </Update>
+
+        | Namee | Type |
+        | --- | --- |
+        | `a` | one |
+
+        ```mdx-code-block
+        <APITable>
+        ```
+
+        | Namee | Type |
+        | --- | --- |
+        | `b` | two |
+
+        ## i18n {/* #i18n */}
+
+        Set the localee here.
+
+        ## Localee {/* #localee */}
+    args: --output=line --no-exit test.mdx
+    exit: 0
+    want: |
+      test.mdx:3:6:Vale.Spelling:Did you really mean 'Notificationn'?
+      test.mdx:7:3:Vale.Spelling:Did you really mean 'Namee'?
+      test.mdx:15:3:Vale.Spelling:Did you really mean 'Namee'?
+      test.mdx:21:9:Vale.Spelling:Did you really mean 'localee'?
+      test.mdx:23:4:Vale.Spelling:Did you really mean 'Localee'?
+
+  - name: repeated-match-after-substring
+    about: "A reported match is masked where it was found. It used to be
+      masked at its first occurrence, which could sit inside another word;
+      the match itself then stayed findable, the next alert with the same
+      text landed on it, and one of the two was dropped as a duplicate."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      test.md: |
+        Subtitles are fine.
+
+        Say titl here.
+
+        Say titl again.
+    args: --output=line --no-exit test.md
+    exit: 0
+    want: |
+      test.md:3:5:Vale.Spelling:Did you really mean 'titl'?
+      test.md:5:5:Vale.Spelling:Did you really mean 'titl'?
+
+  - name: repeated-header-after-code-cell
+    about: "A table cell holding only inline code reaches the walker as a
+      run of mask characters. It is not searched for; it used to be found in
+      a masked info string further down, which moved the cursor past the
+      next table, whose header was then placed at a later copy of itself."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      test.md: |
+        | Namee | Type |
+        | --- | --- |
+        | `defaultMode` | one |
+
+        ```js title="docusaurus.config.js"
+        x
+        ```
+
+        | Namee | Type |
+        | --- | --- |
+        | `id` | two |
+
+        | Namee | Type |
+        | --- | --- |
+        | `x` | three |
+    args: --output=line --no-exit test.md
+    exit: 0
+    want: |
+      test.md:1:3:Vale.Spelling:Did you really mean 'Namee'?
+      test.md:9:3:Vale.Spelling:Did you really mean 'Namee'?
+      test.md:13:3:Vale.Spelling:Did you really mean 'Namee'?
+
+  - name: term-before-autolink-with-later-link
+    about: "#1027 -- a term on an indented line that lazily continues into
+      an autolink, with a Markdown link to the same host later in the
+      file. The term was reported inside the later link's URL; it is
+      reported where it is written."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = en
+
+        [*.md]
+        BasedOnStyles = Vale
+        Vale.Spelling = NO
+      styles/config/vocabularies/en/accept.txt: |
+        GitHub
+      test.md: |
+        # Title
+
+         github:
+        <https://github.com/errata-ai/vale?tab=readme-ov-file>
+
+        [GitHub](https://github.com/errata-ai/vale?tab=readme-ov-file).
+    args: --output=line --no-exit test.md
+    exit: 0
+    want: |
+      test.md:3:2:Vale.Terms:Use 'GitHub' instead of 'github'.
+
+  - name: dita-token-ignores
+    about: "#407 -- ignore patterns apply to DITA. The toolkit reads its
+      input from disk, so the patterns are applied to a copy written
+      beside the source, where its references still resolve."
+    requires: dita
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        TokenIgnores = (\[.+\])
+
+        [*.dita]
+        BasedOnStyles = T
+      styles/T/Rain.yml: |
+        extends: existence
+        message: "found '%s'"
+        level: error
+        tokens:
+          - rains
+      test.dita: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA Topic//EN" "topic.dtd">
+        <topic id="t1">
+          <title>Weather</title>
+          <body>
+            <p>[if it rains, i will not go] but it rains anyway.</p>
+          </body>
+        </topic>
+    args: --output=line --no-exit test.dita
+    exit: 0
+    want: |
+      test.dita:6:44:T.Rain:found 'rains'
+
+  - name: dita-many-files
+    about: "Every DITA file of a run is converted in one toolkit run, through
+      a map written in their common directory, since starting the toolkit
+      costs more than converting a file. A nested topic and one an ignore
+      pattern changes are converted the same way."
+    requires: dita
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        TokenIgnores = (\[.+\])
+
+        [*.dita]
+        BasedOnStyles = T
+      styles/T/Rain.yml: |
+        extends: existence
+        message: "found '%s'"
+        level: error
+        tokens:
+          - rains
+      docs/a.dita: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA Topic//EN" "topic.dtd">
+        <topic id="a">
+          <title>A</title>
+          <body>
+            <p>It rains in A.</p>
+          </body>
+        </topic>
+      docs/sub/b.dita: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA Topic//EN" "topic.dtd">
+        <topic id="b">
+          <title>B</title>
+          <body>
+            <p>[if it rains] then it rains in B.</p>
+          </body>
+        </topic>
+    args: --output=line --no-exit docs
+    exit: 0
+    want: |
+      docs/a.dita:6:11:T.Rain:found 'rains'
+      docs/sub/b.dita:6:30:T.Rain:found 'rains'
+
+  - name: url-in-code-comment
+    about: "A URL is never prose. In a code comment it is blanked before
+      the comment is linted, as a converter already keeps one out of the
+      text of a markup file."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale, T
+      styles/T/Any.yml: |
+        extends: existence
+        message: "saw '%s'"
+        level: error
+        tokens:
+          - foobarbaz
+      doc.go: |
+        package x
+
+        // See https://example.com/foobarbaz-qux for detials.
+        var x = 1
+    args: --output=line --no-exit doc.go
+    exit: 0
+    want: |
+      doc.go:3:46:Vale.Spelling:Did you really mean 'detials'?
+
+  - name: rst-url-and-link-text
+    about: "A reStructuredText link's text is linted where it is written,
+      and a bare URL is not linted at all. A spelling alert is placed by
+      the block's own position, so a word in link text is no longer found
+      inside the URL that follows it."
+    requires: rst2html
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale, T
+      styles/T/Any.yml: |
+        extends: existence
+        message: "saw '%s'"
+        level: error
+        tokens:
+          - foobarbaz
+      doc.rst: |
+        See `foobarbaz text <https://example.com/foobarbaz-qux>`_ and https://example.com/foobarbaz-qux here.
+    args: --output=line --no-exit doc.rst
+    exit: 0
+    want: |
+      doc.rst:1:6:T.Any:saw 'foobarbaz'
+      doc.rst:1:6:Vale.Spelling:Did you really mean 'foobarbaz'?
+
   - name: restructuredtext
     args: test.rst
     requires: rst2html

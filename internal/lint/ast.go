@@ -61,6 +61,14 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 	// Only then does the next text node's leading whitespace faithfully
 	// reflect the source, since `walk` trims it away before we see it.
 	var closedInline bool
+	// trailing is the whitespace that ended the block's last text node, as
+	// the source had it before `walk` trimmed it: what separated that text
+	// from an inline element opening after it.
+	var trailing string
+	// padComment is that whitespace when a comment followed the text: the
+	// comment is masked out, so the next text is separated as the source
+	// separated the comment.
+	var padComment string
 
 	buf := bytes.NewBufferString("")
 
@@ -87,6 +95,14 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 	}
 	var open []inlineCapture
 
+	if sels := l.Manager.Selections(); len(sels) > 0 {
+		marked, err := markSelections(raw, sels)
+		if err != nil {
+			return core.NewE100(f.Path, err)
+		}
+		raw = marked
+	}
+
 	walker := newWalker(f, raw, offset)
 	for {
 		tokt, tok, txt := walker.walk()
@@ -109,7 +125,7 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 
 		if tokt == html.StartTagToken && !core.StringInSlice(txt, inlineTags) &&
 			!core.StringInSlice(txt, voidTags) {
-			walker.enclose(txt, class)
+			walker.enclose(txt, class, getAttribute(tok, markAttr))
 		} else if tokt == html.EndTagToken && !core.StringInSlice(txt, inlineTags) {
 			walker.unclose(txt)
 		}
@@ -117,15 +133,12 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 		blockSkip := skipClass && !core.StringInSlice(txt, inlineTags)
 		if tokt == html.ErrorToken { //nolint:gocritic
 			break
-		} else if tokt == html.StartTagToken && (core.StringInSlice(txt, skipTags) || blockSkip) {
+		} else if tokt == html.StartTagToken && !core.StringInSlice(txt, inlineTags) &&
+			(core.StringInSlice(txt, skipTags) || blockSkip) {
 			walker.setCls(txt, blockSkip)
 			inBlock = true
-			// A skipped *inline* element (e.g. `code` in SkippedScopes) still
-			// separates the words around it, so mark the following text inline
-			// to keep its leading space -- otherwise `in <code/> for` collapses
-			// to `infor`. See #1052.
-			inline = core.StringInSlice(txt, inlineTags)
 			f.Metrics[txt]++
+			walker.count(txt)
 		} else if inBlock && (core.StringInSlice(txt, skipTags) || closed) {
 			inBlock = false
 			if closed {
@@ -150,26 +163,38 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 				// FIXME: See https://github.com/errata-ai/vale/issues/421
 				txt = "code"
 			}
-			inline = core.StringInSlice(txt, inlineTags)
-			skip = core.StringInSlice(txt, skipped)
+			// A void element mid-sentence, `<source>` or `<wbr>`, separates
+			// the words around it as an inline one does; without this the
+			// text on either side fused, `The <source> is` as `Theis`.
+			inline = core.StringInSlice(txt, inlineTags) || core.StringInSlice(txt, voidTags)
+			// An inline element named in SkippedScopes is masked like an
+			// ignored one, rather than dropped: `where <code>x</code> is`
+			// must not read as `where is` (#1173), nor `in <code/> for` as
+			// `infor` (#1052).
+			skip = core.StringInSlice(txt, skipped) || core.StringInSlice(txt, skipTags)
 			closedInline = false
+			padComment = ""
 			if scope, ok := wanted[txt]; ok {
 				// A skipped element's text is masked out of the block, so its
 				// capture has to read the text as it arrived instead.
-				open = append(open, inlineCapture{
-					tag: txt, scope: scope, masked: core.StringInSlice(txt, skipped)})
+				open = append(open, inlineCapture{tag: txt, scope: scope, masked: skip, begin: buf.Len()})
 			}
-			walker.addTag(txt, class)
+			walker.addTag(txt, class, getAttribute(tok, markAttr))
 		} else if tokt == html.EndTagToken && core.StringInSlice(txt, inlineTags) {
 			walker.activeTag = ""
 			closedInline = true
+			padComment = ""
 			if n := len(open); n > 0 && open[n-1].tag == txt {
 				done := open[n-1]
 				open = open[:n-1]
 				if body := strings.TrimSpace(done.text); body != "" {
+					// The run in the buffer, less the padding clean added
+					// around the element's text.
+					written := buf.String()[done.begin:]
+					begin := done.begin + (len(written) - len(strings.TrimLeft(written, " \n")))
 					walker.inline = append(walker.inline, inlineCapture{
-						tag: done.tag, scope: done.scope,
-						masked: done.masked, text: body})
+						tag: done.tag, scope: done.scope, masked: done.masked,
+						text: body, begin: begin, end: done.begin + len(strings.TrimRight(written, " \n"))})
 				}
 			}
 		} else if tokt == html.SelfClosingTagToken && core.StringInSlice(txt, inlineTags) {
@@ -185,8 +210,10 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 			// so leave the state alone and keep its padding (#1052).
 			if !inline {
 				closedInline = true
+				padComment = trailing
 			}
-			f.UpdateComments(txt)
+			// Found before `update` masks it out of the context.
+			f.UpdateCommentsAt(txt, walker.commentAt(txt))
 			walker.update(txt, tokt)
 		} else if tokt == html.TextToken {
 			skip = skip || shouldBeSkipped(walker.tagHistory, f.NormedExt)
@@ -219,21 +246,28 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 				// whitespace is exactly what the source had, so trust it
 				// rather than inferring one: `<code>X</code>s` must not gain a
 				// space (#1111) and `<strong>x</strong> :` must not lose one
-				// (#1119).
-				spaced := startsWithSpace(tok.Data)
+				// (#1119). A line break stays a line break, as it does in
+				// plain text, so `[x](u)\n,` isn't read as `x ,` (#1174).
+				sep := leadingSpace(tok.Data)
+				if closedInline && sep == "" {
+					sep = padComment
+				}
+				padComment = ""
 				// Kept before `clean`, which empties the text of a skipped
 				// element: inline code never reaches the block, so a capture of
 				// it has nothing else to read.
 				raw := txt
-				txt, skip = clean(txt, attr, skip || skipClass, inline, spaced, closedInline)
+				txt, skip = clean(txt, attr, skip || skipClass, inline, sep, closedInline)
 				closedInline = false
 				// `clean` prefixes inline content with a space so it doesn't
 				// fuse with the preceding text. When that content directly
 				// follows a tight boundary -- an opening bracket (a link in
 				// parentheses, `([HNSW](...))`, #1056) or a dash
 				// (`Triggers—**Article**`, #1029) -- the space is spurious and
-				// produces false positives like ` —` / `( ACRONYM)`.
-				if strings.HasPrefix(txt, " ") && endsWithTightBoundary(buf) {
+				// produces false positives like ` —` / `( ACRONYM)`. Unless
+				// the source put whitespace there: `Text — **bold**` keeps
+				// its space, or a rule asking for one reports `—b` (#1177).
+				if strings.HasPrefix(txt, " ") && trailing == "" && endsWithTightBoundary(buf) {
 					txt = txt[1:]
 				}
 				// Record where this run came from before it loses its identity
@@ -243,9 +277,9 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 				// nowhere in the file. See #502.
 				//
 				// Only a run that survived extraction unchanged can be mapped;
-				// `clean` may have prefixed a space, which belongs to the block
-				// and not to the source.
-				if body := strings.TrimLeft(txt, " "); body == raw {
+				// `clean` may have prefixed a separator, which belongs to the
+				// block and not to the source.
+				if body := strings.TrimLeft(txt, " \n"); body == raw {
 					walker.mapRun(buf.Len()+(len(txt)-len(body)), raw)
 				}
 				buf.WriteString(txt)
@@ -261,6 +295,11 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 					}
 				}
 			}
+			if !inBlock && !f.Comments["off"] {
+				// A whitespace-only node counts: `<b>x</b> <i>y</i>` puts a
+				// space between its elements.
+				trailing = trailingSpace(tok.Data)
+			}
 		}
 
 		if tokt == html.EndTagToken && !core.StringInSlice(txt, inlineTags) {
@@ -273,6 +312,13 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 			}
 			walker.reset()
 			buf.Reset()
+
+			// After the flush: the element's own text belongs to it.
+			if agg := walker.closeSelection(); agg != nil {
+				if err := l.lintSelection(f, agg); err != nil {
+					return err
+				}
+			}
 		}
 
 		attr = getAttribute(tok, "href")
@@ -283,6 +329,12 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 		}
 
 		walker.replaceToks(tok)
+	}
+
+	if sels := l.Manager.Selections(); len(sels) > 0 {
+		if err := l.lintAbsent(f, sels, walker.seen); err != nil {
+			return err
+		}
 	}
 
 	return l.lintSizedScopes(f)
@@ -300,6 +352,7 @@ func (l *Linter) lintScope(f *core.File, state *walker, txt string) error {
 	// writing. It is not segmented either -- an identifier has no sentences.
 	if core.StringInSlice("data", state.tagHistory) {
 		f.Metrics["meta"]++
+		state.count("meta")
 
 		b := state.block(txt, withClasses("meta", state)+metaScope(f)+f.RealExt, 0)
 		return l.lintBlock(f, b, state.lines, 0, false)
@@ -315,13 +368,16 @@ func (l *Linter) lintScope(f *core.File, state *walker, txt string) error {
 			if !match {
 				scope = "text.heading." + tag
 			}
-			f.Metrics[strings.TrimPrefix(scope, "text.")]++
+			metric := strings.TrimPrefix(scope, "text.")
+			f.Metrics[metric]++
 
 			shift := len(txt)
 			txt = strings.TrimLeft(txt, " ")
 			shift -= len(txt)
 
 			b := state.block(txt, withClasses(scope, state)+f.MetaScope+f.RealExt, shift)
+			b.Inline = inlineRuns(state.inline, b.Text, shift)
+			state.gather(txt, b.Line, metric)
 
 			// Prose, not just a block: a list item or a heading is made of
 			// sentences the same way a paragraph is, and only this path segments
@@ -356,6 +412,8 @@ func (l *Linter) lintScope(f *core.File, state *walker, txt string) error {
 	f.Metrics["paragraphs"]++
 
 	b := state.block(txt, withClasses("text", state)+f.MetaScope+f.RealExt, 0)
+	b.Inline = inlineRuns(state.inline, b.Text, 0)
+	state.gather(txt, b.Line, "paragraphs")
 	if err := l.lintProse(f, b, state.lines, true); err != nil {
 		return err
 	}
@@ -403,6 +461,24 @@ func (l *Linter) lintInline(f *core.File, state *walker, blk nlp.Block, lines, s
 	return nil
 }
 
+// inlineRuns places each inline element captured in the block within its
+// text, shift being what was trimmed from the buffer's front. A masked
+// element's text is not in the block to place.
+func inlineRuns(caps []inlineCapture, text string, shift int) []nlp.Inline {
+	var runs []nlp.Inline
+	for _, cap := range caps {
+		if cap.masked || cap.text == "" {
+			continue
+		}
+		begin, end := cap.begin-shift, cap.end-shift
+		if begin < 0 || end > len(text) || text[begin:end] != cap.text {
+			continue
+		}
+		runs = append(runs, nlp.Inline{Scope: cap.scope, Begin: begin, End: end})
+	}
+	return runs
+}
+
 // seek finds text in s at or after from, returning where it begins and where
 // the next search should start. A miss leaves the cursor where it was, so one
 // fragment that cannot be placed does not displace the rest.
@@ -436,11 +512,13 @@ func metaScope(f *core.File) string {
 }
 
 func withClasses(scope string, state *walker) string {
-	classes := state.classes()
-	if len(classes) == 0 {
-		return scope
+	if classes := state.classes(); len(classes) > 0 {
+		scope += ".class." + strings.Join(classes, ".class.")
 	}
-	return scope + ".class." + strings.Join(classes, ".class.")
+	if ids := state.selections(); len(ids) > 0 {
+		scope += ".in." + strings.Join(ids, ".in.")
+	}
+	return scope
 }
 
 func (l *Linter) lintSizedScopes(f *core.File) error {
@@ -451,6 +529,7 @@ func (l *Linter) lintSizedScopes(f *core.File) error {
 	// TODO: is this the most efficient place to assign tagging?
 	summary := nlp.NewLinedBlock(f.Content, f.Summary.String(),
 		"summary"+f.RealExt, 0)
+	summary.Metrics = f.Metrics
 
 	for _, blk := range []nlp.Block{summary} {
 		err := l.lintBlock(f, blk, len(f.Lines), 0, true)
@@ -519,21 +598,39 @@ func endsWithTightBoundary(buf *bytes.Buffer) bool {
 	}
 }
 
-// startsWithSpace reports whether s begins with whitespace. It's applied to
-// raw token data -- before `walk` trims it -- to recover whether the source
-// actually separated a text node from the markup preceding it.
-func startsWithSpace(s string) bool {
+// leadingSpace returns the separator the source put before s: a newline for a
+// line break, a space for any other whitespace, and "" when there was none.
+// It's applied to raw token data -- before `walk` trims it -- to recover how
+// the source actually separated a text node from the markup preceding it.
+func leadingSpace(s string) string {
 	if s == "" {
-		return false
+		return ""
 	}
 	switch s[0] {
-	case ' ', '\t', '\n', '\r':
-		return true
+	case '\n', '\r':
+		return "\n"
+	case ' ', '\t':
+		return " "
 	}
-	return false
+	return ""
 }
 
-func clean(txt, attr string, skip, inline, spaced, closedInline bool) (string, bool) {
+// trailingSpace returns the separator the source put after s, the way
+// leadingSpace reads the one before it.
+func trailingSpace(s string) string {
+	if s == "" {
+		return ""
+	}
+	switch s[len(s)-1] {
+	case '\n', '\r':
+		return "\n"
+	case ' ', '\t':
+		return " "
+	}
+	return ""
+}
+
+func clean(txt, attr string, skip, inline bool, sep string, closedInline bool) (string, bool) {
 	// Closing brackets are included so that inline content immediately
 	// followed by one (e.g., a link inside parentheses) doesn't get a spurious
 	// space inserted before it -- "(HNSW)" rather than "(HNSW )" (#1056). Dashes
@@ -553,7 +650,9 @@ func clean(txt, attr string, skip, inline, spaced, closedInline bool) (string, b
 	// opening tag is the boundary and carries no whitespace of its own, so we
 	// fall back to padding inline content; otherwise `in <code/> for`
 	// collapses to `infor` (#1052).
-	if (closedInline && spaced) || (!closedInline && inline && !starter) {
+	if closedInline && sep != "" {
+		txt = sep + txt
+	} else if !closedInline && inline && !starter {
 		txt = " " + txt
 	}
 

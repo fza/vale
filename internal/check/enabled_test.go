@@ -177,3 +177,25 @@ func TestDisabledVocabRuleIsNotCompiled(t *testing.T) {
 		}
 	}
 }
+
+// A rule built from a vocabulary a section names is off globally and switched
+// on for that section's files alone, so the global setting it carries is a
+// default rather than a disable.
+func TestSectionVocabRuleIsCompiled(t *testing.T) {
+	rules := enabledTestManager(t, func(cfg *core.Config) {
+		cfg.GBaseStyles = []string{"Vale"}
+		cfg.Vocabularies = map[string]*core.Vocabulary{
+			"API": {Accepted: []string{"Quxelate"}, Rejected: []string{"k8s"}},
+		}
+		cfg.RuleKeys = append(cfg.RuleKeys, "api/*.md")
+		cfg.SVocab = map[string][]string{"api/*.md": {"API"}}
+		cfg.GChecks["Vale.API.Terms"] = false
+		cfg.GChecks["Vale.API.Avoid"] = false
+	})
+
+	for _, name := range []string{"Vale.API.Terms", "Vale.API.Avoid"} {
+		if !hasRule(rules, name) {
+			t.Errorf("%s must be compiled for the section that names its vocabulary", name)
+		}
+	}
+}

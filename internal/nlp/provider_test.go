@@ -140,3 +140,26 @@ func TestBlockWithRuns(t *testing.T) {
 		t.Errorf("Runs = %v, want nil", lost.Runs)
 	}
 }
+
+// Copies of a block share one summary; a hand-built block still has one.
+func TestSummarizeIsSharedByCopies(t *testing.T) {
+	blk := NewBlock("", "One sentence here. And another one.", "text")
+
+	first := blk.Summarize()
+	if first.NumSentences != 2 {
+		t.Fatalf("NumSentences = %v, want 2", first.NumSentences)
+	}
+
+	copied := blk
+	if copied.Summarize() != first {
+		t.Error("a copy of the block summarized it again")
+	}
+	if blk.Summarize() != first {
+		t.Error("a second call summarized the block again")
+	}
+
+	bare := Block{Text: "Just one."}
+	if got := bare.Summarize().NumSentences; got != 1 {
+		t.Errorf("hand-built block: NumSentences = %v, want 1", got)
+	}
+}

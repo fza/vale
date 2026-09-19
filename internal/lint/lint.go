@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/remeh/sizedwaitgroup"
 
@@ -27,6 +28,18 @@ type Linter struct {
 	glob      *glob.Glob
 	client    *http.Client
 	nonGlobal bool
+
+	// BlockHook, when set, receives every block before its rules run.
+	BlockHook func(nlp.Block)
+
+	// RuleHook, when set, receives each rule's name and what its Run cost.
+	// A hooked run takes the serial path, which is the one that can time a rule.
+	RuleHook func(name string, took time.Duration)
+
+	// ditaHTML holds what the DITA toolkit made of each DITA file in the
+	// run, by absolute path, from one conversion of them all. See
+	// prepareDITA.
+	ditaHTML map[string][]byte
 
 	// adoc holds the Asciidoctor processes this run is using, and adocOnce
 	// starts them the first time an AsciiDoc file is seen.
@@ -161,6 +174,9 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	// called again on the same Linter, so the next run starts its own.
 	defer l.stopExternal()
 
+	l.prepareDITA(input)
+	defer func() { l.ditaHTML = nil }()
+
 	// Every input goes through one pool. Walking them one at a time drained
 	// each before starting the next, so a run given a list of files -- what a
 	// `git ls-files | xargs vale` invocation produces -- linted them one after
@@ -214,7 +230,9 @@ func (l *Linter) lintFiles(done <-chan core.File, roots []string) (<-chan lintRe
 					return err
 				}
 
-				if info.IsDir() && core.ShouldIgnoreDirectory(fp) {
+				if info.IsDir() && (core.ShouldIgnoreDirectory(fp) || (fp != root && l.isStylesPath(fp))) {
+					// A StylesPath holds rules, vocabularies, and synced
+					// packages, not prose; it is linted only when named.
 					return filepath.SkipDir
 				} else if info.IsDir() || l.skip(fp) {
 					return nil
@@ -292,15 +310,23 @@ func (l *Linter) lintFile(src string) lintResult {
 	}
 
 	// Determine what NLP tasks this particular file needs; the goal is to do
-	// the least amount of work possible.
+	// the least amount of work possible. The manager answers for the whole
+	// run, so a file is only segmented when a rule asking for it runs there.
 	file.NLP = l.Manager.AssignNLP(file)
+	file.NLP.Segmentation = file.NLP.Segmentation && l.runsScoped(file, "sentence")
+	file.NLP.Splitting = file.NLP.Splitting && l.runsScoped(file, "paragraph")
 	simple := l.Manager.Config.Flags.Simple
 
 	// NOTE: This is a sanity check to ensure that we don't run any checks that
 	// we actually have a View to apply.
 	hasViews := len(l.Manager.Config.Views) > 0
 
-	if file.Format == "markup" && !simple { //nolint:gocritic
+	if !simple && l.hasView(file) { //nolint:gocritic
+		// A file a view reads: the view says what its prose is, whatever the
+		// file is called. Without this a `.jsonl` or `.log` the section
+		// matched was linted whole, and the view never ran.
+		err = l.lintData(file)
+	} else if file.Format == "markup" && !simple {
 		switch file.NormedExt {
 		case ".adoc":
 			err = l.lintADoc(file)
@@ -324,9 +350,15 @@ func (l *Linter) lintFile(src string) lintResult {
 			err = l.lintDITA(file)
 		case ".html":
 			err = l.lintHTML(file)
+		case ".ipynb":
+			err = l.lintNotebook(file)
 		case ".org":
 			err = l.lintOrg(file)
 		}
+	} else if !simple && isRuleFile(file) {
+		// A Vale rule: its message and description are prose, and its
+		// tokens and swaps are not.
+		err = l.lintRule(file)
 	} else if file.Format == "data" && !simple && hasViews {
 		err = l.lintData(file)
 	} else if file.Format == "code" && !simple {
@@ -338,6 +370,10 @@ func (l *Linter) lintFile(src string) lintResult {
 	} else {
 		err = l.lintLines(file)
 	}
+
+	// A comment read after a block was linted still covers that block: a
+	// converter may emit a promoted title ahead of the comment above it.
+	file.DropDisabled()
 
 	if err == nil {
 		// Run all rules with `scope: raw`
@@ -453,12 +489,16 @@ var parallelFloor = 4096
 func (l *Linter) lintBlock(f *core.File, blk nlp.Block, lines, pad int, lookup bool) error {
 	f.StartBlock()
 
+	if l.BlockHook != nil {
+		l.BlockHook(blk)
+	}
+
 	rules := l.inScopeFor(blk)
 
 	// Below the floor the bookkeeping concurrency needs -- two slices the
 	// length of the rule set, per block -- costs more than the rules do. Most
 	// blocks are a paragraph.
-	if len(blk.Text) < parallelFloor {
+	if len(blk.Text) < parallelFloor || l.RuleHook != nil {
 		return l.lintBlockSerial(f, blk, rules, lines, pad, lookup)
 	}
 
@@ -484,7 +524,7 @@ func (l *Linter) lintBlock(f *core.File, blk nlp.Block, lines, pad int, lookup b
 		if !wanted[i] || found[i] != nil {
 			continue
 		}
-		alerts, err := r.rule.Run(blk, f, l.Manager.Config)
+		alerts, err := r.rule.Run(blockFor(blk, r.rule), f, l.Manager.Config)
 		if err != nil {
 			return err
 		}
@@ -533,7 +573,14 @@ func (l *Linter) lintBlockSerial(f *core.File, blk nlp.Block, rules []scopedRule
 
 		info := chk.Fields()
 
-		alerts, err := chk.Run(blk, f, l.Manager.Config)
+		var start time.Time
+		if l.RuleHook != nil {
+			start = time.Now()
+		}
+		alerts, err := chk.Run(blockFor(blk, chk), f, l.Manager.Config)
+		if l.RuleHook != nil {
+			l.RuleHook(name, time.Since(start))
+		}
 		if err != nil {
 			return err
 		}
@@ -571,7 +618,7 @@ func (l *Linter) runConcurrently(f *core.File, blk nlp.Block, rules []scopedRule
 			blockWorkers <- struct{}{}
 			defer func() { <-blockWorkers }()
 
-			alerts, err := rules[i].rule.Run(blk, f, l.Manager.Config)
+			alerts, err := rules[i].rule.Run(blockFor(blk, rules[i].rule), f, l.Manager.Config)
 			if alerts == nil {
 				alerts = []core.Alert{}
 			}
@@ -600,11 +647,35 @@ func lookup(settings map[string]bool, rule, style string) (bool, bool) {
 	return val, ok
 }
 
+// lookupUnless is lookup, skipping a key that is marked unset.
+func lookupUnless(settings, unset map[string]bool, rule, style string) (bool, bool) {
+	if val, ok := settings[rule]; ok && !unset[rule] {
+		return val, true
+	}
+	if val, ok := settings[style]; ok && !unset[style] {
+		return val, true
+	}
+	return false, false
+}
+
 // inScopeFor returns the rules that could run on blk, by scope alone.
 //
 // Built once per distinct block scope and reused. Everything else shouldRun
 // weighs -- in-text comments, the file's own settings, the minimum level --
 // varies per file and is still decided there.
+// blockFor is blk as the rule sees it: with the text of any inline element
+// the rule's scope negates blanked out.
+func blockFor(blk nlp.Block, chk check.Rule) nlp.Block {
+	if len(blk.Inline) == 0 {
+		return blk
+	}
+	excluded := check.NewScope(chk.Fields().Scope).Excluded
+	if len(excluded) == 0 {
+		return blk
+	}
+	return blk.Without(excluded)
+}
+
 func (l *Linter) inScopeFor(blk nlp.Block) []scopedRule {
 	key := blk.Scope + "\x00" + blk.Parent
 	if l.inScope != nil {
@@ -632,18 +703,43 @@ func (l *Linter) inScopeFor(blk nlp.Block) []scopedRule {
 	return found
 }
 
+// isStylesPath reports whether dir is one of the configuration's StylesPaths.
+func (l *Linter) isStylesPath(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for _, p := range l.Manager.Config.Paths {
+		if candidate, absErr := filepath.Abs(p); absErr == nil && candidate == abs {
+			return true
+		}
+	}
+	return false
+}
+
+// runsScoped reports whether a rule scoped to `scope` will run on f.
+func (l *Linter) runsScoped(f *core.File, scope string) bool {
+	rules := l.Manager.Rules()
+	for _, name := range l.Manager.RulesForScope(scope) {
+		// A `--filter` removes rules after they were registered.
+		if chk, ok := rules[name]; ok && l.shouldRun(name, f, chk) {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Linter) shouldRun(name string, f *core.File, chk check.Rule) bool {
 	minLevel := l.Manager.Config.MinAlertLevel
 	run := false
 
 	details := chk.Fields()
-	if strings.Count(name, ".") > 1 {
-		// NOTE: This fixes the loading issue with consistency checks.
-		//
-		// See #129.
-		list := strings.Split(name, ".")
-		name = strings.Join([]string{list[0], list[1]}, ".")
-	}
+
+	// Configuration addresses the defining rule: a `consistency` alert's
+	// name carries a matched term, and a rule's own name may span
+	// subdirectories, so the rule is found by name, not by dot-count.
+	// See #129.
+	name = l.Manager.RuleForAlert(name)
 
 	if f.QueryComments(name) {
 		// It has been disabled via an in-text comment.
@@ -668,8 +764,9 @@ func (l *Linter) shouldRun(name string, f *core.File, chk check.Rule) bool {
 		run = true
 	}
 
-	// Has the check been disabled for all extensions?
-	if val, ok := lookup(l.Manager.Config.GChecks, name, style); ok && !run {
+	// Has the check been disabled for all extensions? A key the section
+	// marked UNSET takes no global setting either.
+	if val, ok := lookupUnless(l.Manager.Config.GChecks, f.Unset, name, style); ok && !run {
 		if !val {
 			return false
 		}
@@ -691,7 +788,7 @@ func (l *Linter) match(s string) bool {
 }
 
 func (l *Linter) skip(old string) bool {
-	ref := filepath.ToSlash(system.ReplaceFileExt(old, l.Manager.Config.Formats))
+	ref := filepath.ToSlash(core.NormalizePath(old, l.Manager.Config.Formats))
 
 	if !l.match(old) && !l.match(ref) {
 		return true

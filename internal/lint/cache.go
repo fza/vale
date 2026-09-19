@@ -81,6 +81,16 @@ func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 
 	fmt.Fprintf(h, "vale %s\n", version)
 
+	// A development build reports no version, so the version alone cannot tell
+	// two of them apart and one would read what the other wrote. The running
+	// binary's own size and modification time separate them, and leave a
+	// released binary hashing the same on every run.
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		if info, statErr := os.Stat(exe); statErr == nil {
+			fmt.Fprintf(h, "binary %d %d\n", info.Size(), info.ModTime().UnixNano())
+		}
+	}
+
 	resolved, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
