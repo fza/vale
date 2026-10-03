@@ -40,3 +40,30 @@ func TestMarkTagDirectives(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectiveIndex(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		txt     string
+		wantAt  int
+		wantLen int
+	}{
+		{"finds the comment form", "a\n<!-- vale on -->\n", "vale on", 7, 7},
+		{"finds a closing tag by what it means", "a\n</vale off>\n", "vale on", 2, 11},
+		{"finds a rule's closing tag", "</vale House.Passive>", "vale House.Passive = YES", 0, 21},
+		{"takes an opening tag whole", "a <vale off>", "vale off", 2, 10},
+		{"takes whichever comes first", "</vale off> vale on", "vale on", 0, 11},
+		{"skips a tag meaning something else", "<vale off> vale on", "vale on", 11, 7},
+		{"reports a directive not written", "a\nb\n", "vale on", -1, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			at, n := directiveIndex(tt.src, tt.txt)
+			if at != tt.wantAt || n != tt.wantLen {
+				t.Errorf("directive should be located at its own span in the source, got (%d, %d)", at, n)
+			}
+		})
+	}
+}

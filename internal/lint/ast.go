@@ -213,8 +213,11 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 				padComment = trailing
 			}
 			// Found before `update` masks it out of the context.
-			f.UpdateCommentsAt(txt, walker.commentAt(txt))
-			walker.update(txt, tokt)
+			off, masked := walker.commentAt(txt)
+			f.UpdateCommentsAt(txt, off)
+			if !masked {
+				walker.update(txt, tokt)
+			}
 		} else if tokt == html.TextToken {
 			skip = skip || shouldBeSkipped(walker.tagHistory, f.NormedExt)
 			// NOTE: We used to create a "temporary" context here to support

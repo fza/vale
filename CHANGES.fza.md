@@ -105,11 +105,20 @@ so `</vale off>` is not valid HTML and a Markdown parser escapes it into
 paragraph text. Only a line holding nothing else is rewritten, and never one
 inside a fence, so a document showing a directive keeps showing it.
 
+The rewritten comment is then located in the source by the tag it came from.
+`</vale off>` reaches the walker as `vale on`, a text the source does not hold,
+so a plain search found no position and the region `<vale off>` opened was never
+closed, suppressing every alert to the end of the file. The located tag is
+masked out of the source whole: masking the comment's words one by one instead
+consumed matching words of the prose, such as the `on` in `environment`, and
+the alert on them could no longer be placed.
+
 - `internal/core/file.go` — `NormalizeDirective`, `valeTagRE`.
 - `internal/lint/md.go` — `markTagDirectives`, applied to the source before `md.Convert`.
 - `internal/lint/ast.go` — the tag consumed in `lintHTMLTokens` before element bookkeeping.
-- `internal/lint/walk.go` — `walker.rawTok` and `walker.raw()`, the source text captured before `Token` reuses the buffer `Raw` points into.
-- `internal/core/file_test.go` — `TestNormalizeDirective`; `internal/lint/md_directive_test.go`.
+- `internal/lint/walk.go` — `walker.rawTok` and `walker.raw()`, the source text captured before `Token` reuses the buffer `Raw` points into; `directiveIndex`, used by `walker.commentAt`.
+- `internal/core/file_test.go` — `TestNormalizeDirective`; `internal/lint/md_directive_test.go` — `TestMarkTagDirectives`, `TestDirectiveIndex`.
+- `testdata/e2e/comments.yaml` — the `tag-*` cases: Markdown and MDX with and without blank lines, and a code-comment control.
 
 ### A backticked span and a fenced block are masked in a code comment
 

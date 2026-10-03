@@ -301,3 +301,145 @@ cases:
     exit: 0
     want: |
       test.rst:8:6:T.Words:Use 'words' instead of 'text'.
+
+  - name: tag-off-closes-markdown
+    about: "`</vale off>` closes the region `<vale off>` opened, with or
+      without a blank line around either tag. The closing tag reaches the
+      walker as `vale on`, a text the source does not hold, so its position
+      was never found and the region ran to the end of the file."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      spaced.md: |
+        Opening linee here.
+
+        <vale off>
+
+        Inside regionn here.
+
+        </vale off>
+
+        Closing linee here.
+      tight.md: |
+        Opening linee here.
+        <vale off>
+        Inside regionn here.
+        </vale off>
+        Closing linee here.
+    args: --output=line --no-exit spaced.md tight.md
+    exit: 0
+    want: |
+      spaced.md:1:9:Vale.Spelling:Did you really mean 'linee'?
+      spaced.md:9:9:Vale.Spelling:Did you really mean 'linee'?
+      tight.md:1:9:Vale.Spelling:Did you really mean 'linee'?
+      tight.md:5:9:Vale.Spelling:Did you really mean 'linee'?
+
+  - name: tag-rule-closes-markdown
+    about: "`</vale Rule.Name>` restores the rule `<vale Rule.Name = NO>`
+      turned off, with or without a blank line around either tag."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      spaced.md: |
+        Opening linee here.
+
+        <vale Vale.Spelling = NO>
+
+        Inside regionn here.
+
+        </vale Vale.Spelling>
+
+        Closing linee here.
+      tight.md: |
+        Opening linee here.
+        <vale Vale.Spelling = NO>
+        Inside regionn here.
+        </vale Vale.Spelling>
+        Closing linee here.
+    args: --output=line --no-exit spaced.md tight.md
+    exit: 0
+    want: |
+      spaced.md:1:9:Vale.Spelling:Did you really mean 'linee'?
+      spaced.md:9:9:Vale.Spelling:Did you really mean 'linee'?
+      tight.md:1:9:Vale.Spelling:Did you really mean 'linee'?
+      tight.md:5:9:Vale.Spelling:Did you really mean 'linee'?
+
+  - name: tag-closes-mdx
+    about: "MDX reads a tag directive through the Markdown path, so both
+      closing forms close their region there too."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      off.mdx: |
+        Opening linee here.
+
+        <vale off>
+
+        Inside regionn here.
+
+        </vale off>
+
+        Closing linee here.
+      rule.mdx: |
+        Opening linee here.
+
+        <vale Vale.Spelling = NO>
+
+        Inside regionn here.
+
+        </vale Vale.Spelling>
+
+        Closing linee here.
+    args: --output=line --no-exit off.mdx rule.mdx
+    exit: 0
+    want: |
+      off.mdx:1:9:Vale.Spelling:Did you really mean 'linee'?
+      off.mdx:9:9:Vale.Spelling:Did you really mean 'linee'?
+      rule.mdx:1:9:Vale.Spelling:Did you really mean 'linee'?
+      rule.mdx:9:9:Vale.Spelling:Did you really mean 'linee'?
+
+  - name: tag-closes-code-comment
+    about: "Control: both closing forms close their region inside a source
+      comment, the path that never rewrites a tag."
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      probe.go: |
+        package probe
+
+        // Opening linee here.
+        //
+        // <vale off>
+        //
+        // Inside regionn here.
+        //
+        // </vale off>
+        //
+        // Closing linee here.
+        //
+        // <vale Vale.Spelling = NO>
+        //
+        // Inside regionn here.
+        //
+        // </vale Vale.Spelling>
+        //
+        // Final linee here.
+        func Probe() {}
+    args: --output=line --no-exit probe.go
+    exit: 0
+    want: |
+      probe.go:3:12:Vale.Spelling:Did you really mean 'linee'?
+      probe.go:11:12:Vale.Spelling:Did you really mean 'linee'?
+      probe.go:19:10:Vale.Spelling:Did you really mean 'linee'?
