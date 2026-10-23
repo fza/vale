@@ -166,9 +166,7 @@ func hashTree(root string) ([32]byte, error) {
 			return relErr
 		}
 
-		// The styles path is Vale's own, and its files are read this way
-		// wherever a rule is loaded from one.
-		body, readErr := os.ReadFile(path) //nolint:gosec // the tree is the configured StylesPath
+		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			//nolint:nilerr // same reasoning as above
 			return nil
