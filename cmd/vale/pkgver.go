@@ -62,8 +62,19 @@ func supportsVale(constraint string) bool {
 	if err != nil {
 		return true
 	}
+	// A fork build is tagged as a prerelease of the upstream release it
+	// carries -- `v3.25.1-fza.1` -- and a constraint naming no prerelease
+	// excludes every one. It is measured by that release instead.
+	if strings.HasPrefix(v.Prerelease(), forkPrerelease) {
+		if release, relErr := v.SetPrerelease(""); relErr == nil {
+			v = &release
+		}
+	}
 	return c.Check(v)
 }
+
+// forkPrerelease opens the prerelease part of a fork build's version.
+const forkPrerelease = "fza."
 
 // supportedRelease returns the directory to install the package from: dir,
 // where url was unpacked, when this Vale supports what is there, or else a
