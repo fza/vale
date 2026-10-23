@@ -23,13 +23,13 @@ jobs:
 
       - name: GoReleaser
         run: make choco-cross
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-fza.')
 
       # The docs pin their install examples to the current release; this
       # tells the site to move them. DOCS_DISPATCH_TOKEN is a fine-grained
       # token with contents: write on vale-cli/vale.sh.
       - name: Release the docs
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-fza.')
         env:
           GH_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
         run: |-

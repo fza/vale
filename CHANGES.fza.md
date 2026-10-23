@@ -56,6 +56,17 @@ reaches the file, so a directive carries into later comments.
 - `internal/core/file.go` — `IsCommentControl`.
 - `internal/lint/code_test.go`.
 
+### A fork build meets a package's `vale_version` by the release it carries
+
+A fork build is tagged as a prerelease of its upstream base, `v3.25.1-fza.1`,
+and a semver constraint naming no prerelease excludes every prerelease, so
+`vale sync` refused a package asking for `>=3.0.0`. A version whose prerelease
+opens with `fza.` is measured by the release it carries; any other prerelease
+keeps upstream's reading.
+
+- `cmd/vale/pkgver.go` — `supportsVale`, `forkPrerelease`.
+- `cmd/vale/pkgver_test.go` — `TestSupportsValeOnAForkBuild`.
+
 ### A setting reaches a rule group between a rule and its style
 
 A rule's name spans the subdirectories it sits under, and a style's own name may
@@ -405,15 +416,18 @@ Rejected:
 
 A fork tag is released by `.github/workflows/release-fza.yml`, which runs only
 for a tag matching `v*-fza.*`, against `.goreleaser.fza.yml`. It builds macOS
-and Linux on amd64 and arm64 inside the cross-compiling image upstream's release
-already uses (cgo parsers need its osxcross toolchain), publishes the GitHub
-release, and writes the cask `vale` into `fza/homebrew-tap`:
+and Linux on amd64 and arm64 inside `ghcr.io/goreleaser/goreleaser-cross`,
+pinned by tag (Vale's parsers are cgo, and the image carries a cross-compiler
+per target, osxcross among them), publishes the GitHub release, and writes the
+cask `vale` into `fza/homebrew-tap`:
 
 ```sh
 brew install fza/tap/vale
 ```
 
-The release owner and the cask homepage come from `GITHUB_REPOSITORY_OWNER`.
+The binary reports the tag as written, `vale version v3.25.1-fza.1`, which is
+what a consumer pinning a tag compares against. The release owner and the cask
+homepage come from `GITHUB_REPOSITORY_OWNER`.
 `skip_upload` comes from the Actions variable `HOMEBREW_CASK_SKIP_UPLOAD`, set
 to `false` on the fork, since every fork tag is a semver prerelease and `auto`
 would skip it. `HOMEBREW_TAP_TOKEN` is a fine-grained token with contents write
@@ -428,6 +442,9 @@ Rejected:
 - Switching upstream's release workflow off in the fork's Actions settings:
   touches no upstream file, but the switch lives outside the repository, a fresh
   fork forgets it, and it also stops upstream's README lint.
+- Upstream's `jdkato/choco-cross` image: built around upstream's Chocolatey
+  step, and the fork needs a GoReleaser that writes casks, which a pinned
+  goreleaser-cross tag states in its release notes.
 - A cask entry inside upstream's `.goreleaser.yml`: one configuration, but the
   fork then edits upstream's most-changed release files and must skip
   Chocolatey and Windows builds it has no use for.
