@@ -84,6 +84,9 @@ type scopedRule struct {
 type lintResult struct {
 	file *core.File
 	err  error
+	// root is the index of the input path this file was found under, which is
+	// what lets the caller report files in the order they were asked for.
+	root int
 	path string // the document linted, for an error that is about it
 }
 
@@ -197,28 +200,31 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	l.prepareDITA(input)
 	defer func() { l.ditaHTML = nil }()
 
+	// Every input goes through one pool. Walking them one at a time drained
+	// each before starting the next, so a run given a list of files -- what a
+	// `git ls-files | xargs vale` invocation produces -- linted them one after
+	// another and left the pool idle.
+	filesChan, errChan := l.lintFiles(done, input)
+
 	// A document that can't be read or parsed is reported, and the rest are
 	// still linted; anything else stops the run.
 	var docErrs DocumentErrors
-	for _, src := range input {
-		filesChan, errChan := l.lintFiles(done, src)
-
-		for result := range filesChan {
-			switch {
-			case result.err != nil && documentError(result.err, result.path):
-				docErrs = append(docErrs, result.err)
-				continue
-			case result.err != nil:
-				return linted, result.err
-			case l.Manager.Config.Flags.Normalize:
-				result.file.Path = filepath.ToSlash(result.file.Path)
-			}
-			linted = append(linted, result.file)
+	found := make([][]*core.File, len(input))
+	for result := range filesChan {
+		switch {
+		case result.err != nil && documentError(result.err, result.path):
+			docErrs = append(docErrs, result.err)
+			continue
+		case result.err != nil:
+			return inOrder(found), result.err
+		case l.Manager.Config.Flags.Normalize:
+			result.file.Path = filepath.ToSlash(result.file.Path)
 		}
+		found[result.root] = append(found[result.root], result.file)
+	}
 
-		if err = <-errChan; err != nil {
-			return linted, err
-		}
+	if err = <-errChan; err != nil {
+		return inOrder(found), err
 	}
 
 	if len(docErrs) > 0 {
@@ -226,9 +232,20 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 		sort.SliceStable(docErrs, func(i, j int) bool {
 			return errorPath(docErrs[i]) < errorPath(docErrs[j])
 		})
-		return linted, docErrs
+		return inOrder(found), docErrs
 	}
-	return linted, nil
+	return inOrder(found), nil
+}
+
+// inOrder flattens per-input results back into the order the inputs were
+// given. Concurrency decides which file within a directory finishes first, as
+// it always has, but which input a file came from is fixed.
+func inOrder(found [][]*core.File) []*core.File {
+	var linted []*core.File
+	for _, files := range found {
+		linted = append(linted, files...)
+	}
+	return linted
 }
 
 // errorPath is the document an error from documentError is about.
@@ -243,45 +260,57 @@ func errorPath(err error) string {
 	return ""
 }
 
-// lintFiles walks the `root` directory, creating a new goroutine to lint any
-// file that matches the given glob pattern.
-func (l *Linter) lintFiles(done <-chan core.File, root string) (<-chan lintResult, <-chan error) {
+// lintFiles walks each of the `roots` directories, creating a new goroutine to
+// lint any file that matches the given glob pattern.
+//
+// One pool spans every root, so a thousand file arguments keep it as busy as a
+// single directory of a thousand files does.
+func (l *Linter) lintFiles(done <-chan core.File, roots []string) (<-chan lintResult, <-chan error) {
 	filesChan := make(chan lintResult)
 	errChan := make(chan error, 1)
 
 	go func() {
-		wg := sizedwaitgroup.New(5)
+		wg := sizedwaitgroup.New(fileWorkers)
 
-		err := system.Walk(root, func(fp string, info fs.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			if info.IsDir() && (core.ShouldIgnoreDirectory(fp) || (fp != root && l.isStylesPath(fp))) {
-				// A StylesPath holds rules, vocabularies, and synced
-				// packages, not prose; it is linted only when named.
-				return filepath.SkipDir
-			} else if info.IsDir() || l.skip(fp) {
-				return nil
-			}
-
-			wg.Add()
-			go func(fp string) {
-				select {
-				case filesChan <- l.lintFile(fp):
-				case <-done:
+		var err error
+		for i, root := range roots {
+			err = system.Walk(root, func(fp string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
 				}
-				wg.Done()
-			}(fp)
 
-			// Abort the walk if done is closed.
-			select {
-			case <-done:
-				return errors.New("walk canceled")
-			default:
-				return nil
+				if info.IsDir() && (core.ShouldIgnoreDirectory(fp) || (fp != root && l.isStylesPath(fp))) {
+					// A StylesPath holds rules, vocabularies, and synced
+					// packages, not prose; it is linted only when named.
+					return filepath.SkipDir
+				} else if info.IsDir() || l.skip(fp) {
+					return nil
+				}
+
+				wg.Add()
+				go func(fp string, root int) {
+					result := l.lintFile(fp)
+					result.root = root
+
+					select {
+					case filesChan <- result:
+					case <-done:
+					}
+					wg.Done()
+				}(fp, i)
+
+				// Abort the walk if done is closed.
+				select {
+				case <-done:
+					return errors.New("walk canceled")
+				default:
+					return nil
+				}
+			})
+			if err != nil {
+				break
 			}
-		})
+		}
 
 		// Walk has returned, so all calls to wg.Add are done.  Start a
 		// goroutine to close c once all the sends are done.
@@ -534,6 +563,11 @@ var concurrentKinds = map[string]bool{
 // files are already linted in parallel, and a pool per block would multiply by
 // however many are in flight.
 var blockWorkers = make(chan struct{}, runtime.GOMAXPROCS(0))
+
+// fileWorkers bounds how many files are linted at once. Each of them also
+// draws on blockWorkers, so raising this buys nothing once that pool is the
+// constraint.
+const fileWorkers = 5
 
 // parallelFloor is the block size below which running rules concurrently costs
 // more than it saves. A variable so a test can force either path over the same
