@@ -509,7 +509,13 @@ func (mgr *Manager) loadDefaultRules() error {
 		}
 	}
 
+	// The built-in rules answer to `Vale.Rule = NO` the same way a style's do,
+	// and building one is not free: `Vale.Spelling` reads a dictionary off
+	// disk, and `Vale.Terms` compiles a pattern holding the whole vocabulary.
 	for _, name := range []string{"Repetition", "Spelling"} {
+		if !mgr.enabledSomewhere("Vale." + name) {
+			continue
+		}
 		rule, err := buildRule(mgr.Config, mgr.defaultRule(name))
 		if err != nil {
 			return err
@@ -601,7 +607,9 @@ func (mgr *Manager) loadVocabRules() {
 // with one, that's `\b`; for `C++` or `.NET`, whose edges `\b` can't match
 // beside a space, it's what lets the term be found at all.
 func (mgr *Manager) addTerms(name string, terms []string) {
-	if len(terms) == 0 {
+	// Compiling a vocabulary into one pattern is not free, and a vocabulary
+	// rule answers to `Vale.Terms = NO` the same way a style's rule does.
+	if len(terms) == 0 || !mgr.enabledSomewhere(name) {
 		return
 	}
 	own := mgr.Config.WordTemplate == ""
@@ -632,7 +640,7 @@ func (mgr *Manager) addTerms(name string, terms []string) {
 // addAvoid adds an Avoid rule, which reports a rejected term, from the
 // given terms.
 func (mgr *Manager) addAvoid(name string, terms []string) {
-	if len(terms) == 0 {
+	if len(terms) == 0 || !mgr.enabledSomewhere(name) {
 		return
 	}
 	tokens := make([]string, 0, len(terms))
@@ -664,6 +672,15 @@ func (mgr *Manager) enabledSomewhere(name string) bool {
 	cfg := mgr.Config
 	style := core.StyleName(name)
 
+	// A rule built from a vocabulary a section names is off globally by
+	// design and switched on for that section's files alone, which no setting
+	// in the configuration records. The global `false` it carries is that
+	// default rather than a disable, so reading it here would skip a rule the
+	// run goes on to ask for.
+	if mgr.sectionVocabRule(name) {
+		return true
+	}
+
 	// Named on: decides wherever it is set, BasedOnStyles or not.
 	for _, sec := range cfg.SChecks {
 		if val, ok := checkSetting(sec, name, style); ok && val {
@@ -690,6 +707,22 @@ func (mgr *Manager) enabledSomewhere(name string) bool {
 	}
 
 	return false
+}
+
+// sectionVocabRule reports whether name is a Terms or Avoid rule built from a
+// vocabulary some section names.
+func (mgr *Manager) sectionVocabRule(name string) bool {
+	style, rest, found := strings.Cut(name, ".")
+	if !found || style != "Vale" {
+		return false
+	}
+
+	vocab, kind, found := strings.Cut(rest, ".")
+	if !found || (kind != "Terms" && kind != "Avoid") {
+		return false
+	}
+
+	return core.StringInSlice(vocab, mgr.Config.SectionVocabs())
 }
 
 // checkSetting reads a rule's setting, falling back to its style's -- the
