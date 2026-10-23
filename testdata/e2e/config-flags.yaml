@@ -50,7 +50,7 @@ cases:
       test.md:56:23:vale.Annotations:'TODO' left in text
 
   - name: glob
-    args: "--glob=*.{py,cc} ."
+    args: "--no-nested --glob=*.{py,cc} ."
     requires: asciidoctor, dita, rst2html, xsltproc
     exit: 0
     want: |
@@ -70,7 +70,7 @@ cases:
       test.py:37:5:vale.Annotations:'TODO' left in text
 
   - name: glob-negated
-    args: "--glob=!*.py ."
+    args: "--no-nested --glob=!*.py ."
     exit: 0
     absent:
       - py
@@ -87,7 +87,7 @@ cases:
       content/c.md:1:7:Vale.Spelling:Did you really mean 'ipsum'?
 
   - name: glob-negated-multi
-    args: "--glob=!**/*.{md,py,mdx,Rmd,qmd,myst} ."
+    args: "--no-nested --glob=!**/*.{md,py,mdx,Rmd,qmd,myst} ."
     exit: 0
     absent:
       - md
