@@ -2077,6 +2077,40 @@ cases:
       c.mts:1:4:T.Tok:'ZQX' found
       d.cts:1:4:T.Tok:'ZQX' found
 
+  - name: doc-opener-by-language
+    about: "a comment opening with the name the declaration below it carries
+      reads that name as code where the language's convention asks for it --
+      Go, C, C++, Rust -- and as prose everywhere else"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Tok = YES
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        tokens:
+          - Zqxify
+          - Zqxback
+      a.go: |
+        package main
+
+        // Zqxify / Zqxback turn their input around.
+        var Zqxify, Zqxback = 1, 2
+      b.c: |
+        // Zqxify turns its input around.
+        void Zqxify(void) {}
+      c.js: |
+        // Zqxify turns its input around.
+        function Zqxify() {}
+    args: a.go b.c c.js
+    exit: 1
+    want: |
+      c.js:1:4:T.Tok:'Zqxify' found
+
   - name: php
     args: test.php
     exit: 0

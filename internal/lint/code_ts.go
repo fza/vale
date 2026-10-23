@@ -58,9 +58,13 @@ func (l *Linter) lintCode(f *core.File) error {
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
-		// Only a comment opens with the symbol it documents. A batch
-		// converted the comment as written, which a masked one no longer is.
-		text, html := maskDocOpener(source, comment), converted[i]
+		// Only a comment opens with the symbol it documents, and only where
+		// the language's convention asks it to. A batch converted the comment
+		// as written, which a masked one no longer is.
+		text, html := comment.Text, converted[i]
+		if lang.OpensWithName {
+			text = maskDocOpener(source, comment)
+		}
 		if text != comment.Text {
 			html = ""
 		}
