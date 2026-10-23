@@ -72,6 +72,8 @@ func (l *Linter) lintCode(f *core.File) error {
 		return err
 	}
 	wholeFile := f.Content
+	// Read before the loop, which replaces the file's text with each comment's.
+	source := strings.Split(wholeFile, "\n")
 
 	converted := l.rstBatch(f, comments, "")
 
@@ -81,9 +83,18 @@ func (l *Linter) lintCode(f *core.File) error {
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
-		err = eachDirectiveRun(f, comment.Text, func(run string) error {
-			// A batch converted the comment whole, which a run split at a
-			// directive no longer is.
+		// Only a comment opens with the symbol it documents, and only where
+		// the language's convention asks it to. Masking anything else would
+		// blank a real word whenever the code below happened to use one
+		// spelled the same.
+		text := comment.Text
+		if lang.OpensWithName {
+			text = maskDocOpener(source, comment)
+		}
+
+		err = eachDirectiveRun(f, text, func(run string) error {
+			// A batch converted the comment whole, which a run masked or
+			// split at a directive no longer is.
 			html := ""
 			if run == comment.Text {
 				html = converted[i]
@@ -229,6 +240,199 @@ func (l *Linter) lintComment(f *core.File, text, format, html string) error {
 
 	f.Format, f.NormedExt = kind, ext
 	return err
+}
+
+// docOpener matches the run of names a comment opens with, which is the only
+// position backticks cannot reach: the convention asks for the symbol bare. One
+// comment may document several symbols at once, written as names separated by
+// slashes, and every name in that run is asked for bare. A colon after the run
+// makes the comment an annotation rather than documentation, so the words are a
+// label and stay prose.
+var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*(?:\s*/\s*[A-Za-z_][A-Za-z0-9_]*)*)(?:[^:\w]|$)`)
+
+// packageOpener matches the name in a package comment, which opens with the
+// word `Package` before it.
+var packageOpener = regexp.MustCompile(`^(Package\s+)([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
+
+// maskDocOpener blanks the word a comment opens with when the declaration
+// beneath names it, so a documented symbol reads as code rather than as prose.
+// Go, C, Swift and Rust all ask a doc comment to open with the name it
+// documents, and no markup is allowed in that position.
+//
+// The name has to appear in the declaration for the mask to apply, so a comment
+// opening with a misspelled name still reports: nothing beneath it matches.
+func maskDocOpener(source []string, comment code.Comment) string {
+	lines := strings.Split(comment.Text, "\n")
+
+	opener := 0
+	for opener < len(lines) && strings.TrimSpace(lines[opener]) == "" {
+		opener++
+	}
+	if opener == len(lines) {
+		return comment.Text
+	}
+
+	indent := len(lines[opener]) - len(strings.TrimLeft(lines[opener], " \t"))
+	rest := lines[opener][indent:]
+
+	// A package comment opens with the word `Package` and then one name, which
+	// the convention asks for bare in that second position.
+	if pm := packageOpener.FindStringSubmatch(rest); pm != nil {
+		if !declares(source, comment, pm[2]) {
+			return comment.Text
+		}
+
+		lines[opener] = mask(lines[opener], indent+len(pm[1]), len(pm[2]))
+
+		return strings.Join(lines, "\n")
+	}
+
+	m := docOpener.FindStringSubmatch(rest)
+	if m == nil {
+		return comment.Text
+	}
+
+	names, offsets := runNames(m[1])
+	if len(names) == 0 {
+		return comment.Text
+	}
+
+	// The first name documents the declaration directly beneath, which is the
+	// check a single-name opener already answers. Masking nothing when it fails
+	// keeps a misspelled opener reporting.
+	if !declares(source, comment, names[0]) {
+		return comment.Text
+	}
+
+	// Every later name in the run is a sibling of that declaration rather than
+	// the declaration itself, so it is read from the block below instead of
+	// from one line. A name missing there stays prose and still reports.
+	block := declarationBlock(source, comment, len(names)+blockSlack)
+
+	for i, name := range names {
+		if i > 0 && !namedInAny(block, name) {
+			continue
+		}
+
+		lines[opener] = mask(lines[opener], indent+offsets[i], len(name))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// blockSlack is how many lines beyond the run's own length the block may carry,
+// covering the braces and blank lines a declaration puts between its names.
+const blockSlack = 4
+
+// mask blanks a span of a line, leaving its length unchanged so every offset
+// taken before it still lands.
+func mask(line string, at, width int) string {
+	return line[:at] + strings.Repeat(" ", width) + line[at+width:]
+}
+
+// runNames splits an opening run into its names, with each name's own offset
+// inside the run. A run holding an empty part is not a run of names.
+func runNames(run string) ([]string, []int) {
+	var (
+		names   []string
+		offsets []int
+		at      int
+	)
+
+	for _, part := range strings.Split(run, "/") {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			return nil, nil
+		}
+
+		names = append(names, name)
+		offsets = append(offsets, at+strings.Index(part, name))
+		at += len(part) + 1
+	}
+
+	return names, offsets
+}
+
+// declarationBlock reads the lines a declaration occupies below a comment,
+// skipping blanks and comments, and stopping once it holds limit of them.
+func declarationBlock(source []string, comment code.Comment, limit int) []string {
+	below := commentEnd(comment)
+
+	var block []string
+	for i := below; i < len(source) && len(block) < limit; i++ {
+		line := strings.TrimSpace(source[i])
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") ||
+			strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		block = append(block, line)
+	}
+
+	return block
+}
+
+// namedInAny reports whether any line of a block names the given word.
+func namedInAny(block []string, name string) bool {
+	for _, line := range block {
+		if namedIn(line, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// declares reports whether the source below a comment names the given word. It
+// reads the first line that is neither blank nor a comment of its own, which is
+// where a declaration sits in every language carrying this convention.
+func declares(source []string, comment code.Comment, name string) bool {
+	below := commentEnd(comment)
+
+	for i := below; i < len(source) && i < below+4; i++ {
+		line := strings.TrimSpace(source[i])
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") ||
+			strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return namedIn(line, name)
+	}
+	return false
+}
+
+// commentEnd is the first source line below a comment, indexed from zero. The
+// comment's own last line is the line before it, and a trailing newline adds no
+// line, so it is trimmed first.
+func commentEnd(comment code.Comment) int {
+	return comment.Line - 1 + strings.Count(strings.TrimRight(comment.Source, "\n"), "\n") + 1
+}
+
+// namedIn reports whether a line carries the name as a whole word rather than
+// as part of a longer one.
+func namedIn(line, name string) bool {
+	for at := 0; ; {
+		i := strings.Index(line[at:], name)
+		if i < 0 {
+			return false
+		}
+		i += at
+
+		before := i == 0 || !isWordByte(line[i-1])
+		end := i + len(name)
+		after := end == len(line) || !isWordByte(line[end])
+
+		if before && after {
+			return true
+		}
+		at = i + 1
+	}
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
 }
 
 // fencedCode matches a fenced block, which a comment uses for an example it
