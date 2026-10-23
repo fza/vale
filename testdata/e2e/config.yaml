@@ -34,7 +34,7 @@ cases:
     args: test.md
     exit: 1
     want: |
-      test.md:1:66:Vale.Spelling:Did you really mean 'javascript'?
+      test.md:1:66:Vale.Spelling:Use 'JavaScript' instead of 'javascript'.
       test.md:1:77:Vale.Spelling:Did you really mean 'agendize'?
 
   - name: no-styles-path-external
@@ -47,7 +47,134 @@ cases:
     args: test.md
     exit: 2
     contains: |
-      E100 [loadStyles] Runtime error
+      Style 'proselint' isn't on the StylesPath
+
+  - name: dot-config
+    about: "`.config/vale.ini` is found from any level of the search, and its
+      relative paths resolve against `.config/`; see #1212"
+    files:
+      .config/vale.ini: |
+        StylesPath = vale
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = T
+      .config/vale/T/W.yml: |
+        extends: existence
+        message: "'%s'"
+        level: error
+        tokens:
+          - very
+    args: test.md
+    exit: 1
+    want: |
+      test.md:1:11:T.W:'very'
+
+  - name: dot-config-root-wins
+    about: "a root-level config file is read before `.config/vale.ini`"
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      .config/vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = T
+    args: test.md
+    exit: 1
+    want: |
+      test.md:1:66:Vale.Spelling:Use 'JavaScript' instead of 'javascript'.
+      test.md:1:77:Vale.Spelling:Did you really mean 'agendize'?
+
+  - name: config-flag-is-the-root
+    about: "an error in the file `--config` names points at that file, not at
+      one the search would have found"
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      other/vale.ini: |
+        MinAlertLevel = suggestion
+        BlockIgnores = (?s)x
+
+        [*]
+        BasedOnStyles = Vale
+    args: --config=other/vale.ini test.md
+    exit: 2
+    contains: |
+      other/vale.ini
+    absent:
+      - .vale.ini
+
+  - name: unknown-style-points-at-config
+    about: "an unknown style is reported at the BasedOnStyles line that names
+      it, not at a comment that mentions it"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        # Nope is only mentioned here.
+        [*.md]
+        BasedOnStyles = Vale, Nope
+      styles/config/vocabularies/Base/accept.txt: |
+        Vale
+    args: --output=line test.md
+    exit: 2
+    contains: |
+      .vale.ini:5:E201:Style 'Nope' isn't on the StylesPath
+
+  - name: missing-styles-path
+    about: "the StylesPath line is found by the value as written, so the error
+      shows it instead of line 0 and the whole file"
+    files:
+      .vale.ini: |
+        # Where styles live.
+        StylesPath = nowhere
+
+        [*.md]
+        BasedOnStyles = Vale
+    args: --output=line test.md
+    exit: 2
+    contains: |
+      .vale.ini:2:E201:The StylesPath
+
+  - name: bad-pattern-points-at-token
+    about: "a pattern that doesn't compile is reported at its own line, quoted
+      as written rather than inside the pattern Vale builds around it"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Bad.yml: |
+        extends: existence
+        message: "'%s'"
+        tokens:
+          - fine
+          - '(unclosed'
+    args: --output=line test.md
+    exit: 2
+    contains: |
+      styles/T/Bad.yml:5:E201:Invalid pattern: missing closing ) in `(unclosed`
+
+  - name: invalid-level-warns
+    about: "a bad level and a misspelled key used to be ignored in silence"
+    files:
+      .vale.ini: |
+        [*.md]
+        BasedOnStyle = Vale
+        Vale.Spelling = maybe
+    args: --no-color test.md
+    exit: 0
+    contains: |
+      W101 'BasedOnStyle' isn't a section option; Vale is ignoring it.
+      W101 'Vale.Spelling = maybe' isn't YES, NO, UNSET, or a level; Vale is switching the rule off.
 
   - name: level-error
     files:
@@ -444,7 +571,7 @@ cases:
     exit: 1
     want: |
       docs/page.md:1:17:Vale.Spelling:Did you really mean 'typpo'?
-      test.md:1:66:Vale.Spelling:Did you really mean 'javascript'?
+      test.md:1:66:Vale.Spelling:Use 'JavaScript' instead of 'javascript'.
       test.md:1:77:Vale.Spelling:Did you really mean 'agendize'?
 
   - name: styles-path-named
@@ -461,7 +588,7 @@ cases:
     args: styles/Demo/README.md
     exit: 1
     want: |
-      styles/Demo/README.md:1:11:Vale.Spelling:Did you really mean 'readme'?
+      styles/Demo/README.md:1:11:Vale.Spelling:Use 'README' instead of 'readme'.
       styles/Demo/README.md:1:25:Vale.Spelling:Did you really mean 'typpo'?
 
   - name: rule-file-prose-only
@@ -514,20 +641,20 @@ cases:
         Zorbblat
       styles/config/vocabularies/API/accept.txt: |
         Quxelate
-        kubectl
+        kubeadm
       styles/config/vocabularies/API/reject.txt: |
         k8s
       api/page.md: |
-        Run kubectl on Zorbblat with Quxelate, not quxelate or k8s.
+        Run kubeadm on Zorbblat with Quxelate, not quxelate or k8s.
       docs/page.md: |
-        Run kubectl on Zorbblat with Quxelate, not quxelate or k8s.
+        Run kubeadm on Zorbblat with Quxelate, not quxelate or k8s.
     args: api/page.md docs/page.md
     exit: 1
     want: |
       api/page.md:1:44:Vale.API.Terms:Use 'Quxelate' instead of 'quxelate'.
       api/page.md:1:44:Vale.Spelling:Did you really mean 'quxelate'?
       api/page.md:1:56:Vale.API.Avoid:Avoid using 'k8s'.
-      docs/page.md:1:5:Vale.Spelling:Did you really mean 'kubectl'?
+      docs/page.md:1:5:Vale.Spelling:Did you really mean 'kubeadm'?
       docs/page.md:1:30:Vale.Spelling:Did you really mean 'Quxelate'?
       docs/page.md:1:44:Vale.Spelling:Did you really mean 'quxelate'?
 
@@ -695,3 +822,840 @@ cases:
     exit: 2
     want: |
       docs/.vale.ini:1:E201:'MinAlertLevel' outside a section applies to a whole run, which a configuration in a directory cannot decide; set it in the root configuration. A nested file carries glob sections alone -- use [**] for every file here.
+
+  - name: unreadable-document-continues
+    about: a document that can't be parsed is reported, the rest are still
+      linted, and the run exits as an error; it used to stop the run at the
+      first such file
+    files:
+      _vale: |
+        MinAlertLevel = suggestion
+
+        [*.{md,mdx}]
+        BasedOnStyles = Vale
+      a-broken.md: |
+        ---
+        title: [unclosed
+        ---
+
+        Text.
+      b-tag.mdx: |
+        # Title
+
+        <Card title={
+
+        This is never read.
+      c-expr.mdx: |
+        ---
+        title: Front matter
+        description: "Two lines
+          long"
+        ---
+
+        # Title
+
+        {1 +
+
+        This is never read.
+      d-good.md: |
+        This is a speling mistake.
+    args: .
+    exit: 2
+    want: |
+      d-good.md:1:11:Vale.Spelling:Did you really mean 'speling'?
+      test.md:1:66:Vale.Spelling:Use 'JavaScript' instead of 'javascript'.
+      test.md:1:77:Vale.Spelling:Did you really mean 'agendize'?
+      a-broken.md:1:E201:yaml: line 1: did not find expected ',' or ']'
+      b-tag.mdx:3:E201:Invalid MDX: the tag opened here never ends, so the rest of the file can't be read.
+      c-expr.mdx:9:E201:Invalid MDX: the expression opened here never closes, so the rest of the file can't be read.
+
+  - name: package-styles-dropped
+    about: a project's section that replaces the styles a package turns on, and
+      leaves some out, says so once, naming what to list
+    files:
+      _vale: |
+        StylesPath = styles
+
+        [docs/**]
+        BasedOnStyles = Extra
+      styles/.vale-config/1-House.ini: |
+        [*.md]
+        BasedOnStyles = House
+      styles/House/Simply.yml: |
+        extends: existence
+        message: "Avoid '%s'."
+        level: error
+        tokens: [simply]
+      styles/Extra/Basically.yml: |
+        extends: existence
+        message: "Avoid '%s'."
+        level: error
+        tokens: [basically]
+      top.md: |
+        This is simply and basically fine.
+      docs/a.md: |
+        This is simply and basically fine.
+      docs/b.md: |
+        This is simply and basically fine.
+    args: top.md docs/a.md docs/b.md
+    exit: 1
+    want: |
+      W101 [docs/**] replaces the styles the House package turns on for its files (House). To keep them, list them too: BasedOnStyles = House, Extra
+      docs/a.md:1:20:Extra.Basically:Avoid 'basically'.
+      docs/b.md:1:20:Extra.Basically:Avoid 'basically'.
+      top.md:1:9:House.Simply:Avoid 'simply'.
+
+  - name: vocab-star-section
+    about: "`Vocab` in `[*]` beside a top-level `Vocab` names a vocabulary for
+      every file, with rules of its own; it used to be read as a misplaced
+      core option"
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Base
+
+        [*]
+        BasedOnStyles = Vale
+        Vocab = Pkg
+      styles/config/vocabularies/Base/accept.txt: |
+        Quxelate
+      styles/config/vocabularies/Pkg/accept.txt: |
+        Zorbblat
+      page.md: |
+        Zorbblat and Quxelate, then zorbblat and quxelate.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:29:Vale.Pkg.Terms:Use 'Zorbblat' instead of 'zorbblat'.
+      page.md:1:29:Vale.Spelling:Did you really mean 'zorbblat'?
+      page.md:1:42:Vale.Terms:Use 'Quxelate' instead of 'quxelate'.
+
+  - name: vocab-from-a-package
+    about: a package's `[*]` vocabulary adds to the project's, and the project
+      can switch off its rules by name, or clear it with `Vocab = NONE`
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Base
+
+        [*]
+        BasedOnStyles = Vale
+        Vale.Pkg.Terms = NO
+      styles/.vale-config/1-Pkg.ini: |
+        [*]
+        Vocab = Pkg
+      styles/config/vocabularies/Base/accept.txt: |
+        Quxelate
+      styles/config/vocabularies/Pkg/accept.txt: |
+        Zorbblat
+      page.md: |
+        Zorbblat and Quxelate, then zorbblat and quxelate.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:29:Vale.Spelling:Did you really mean 'zorbblat'?
+      page.md:1:42:Vale.Terms:Use 'Quxelate' instead of 'quxelate'.
+
+  - name: vocab-none
+    about: "`Vocab = NONE` clears the vocabularies earlier layers named at the
+      same level: in `[*]` the package's, at the top the project's own"
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = NONE
+
+        [*]
+        BasedOnStyles = Vale
+        Vocab = NONE
+      styles/.vale-config/1-Pkg.ini: |
+        Vocab = Base
+
+        [*]
+        Vocab = Pkg
+      styles/config/vocabularies/Base/accept.txt: |
+        Quxelate
+      styles/config/vocabularies/Pkg/accept.txt: |
+        Zorbblat
+      page.md: |
+        Zorbblat and Quxelate.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:1:Vale.Spelling:Did you really mean 'Zorbblat'?
+      page.md:1:14:Vale.Spelling:Did you really mean 'Quxelate'?
+
+  - name: vocab-yaml
+    about: "#1089 -- a vocab.yml beside accept.txt: a term is literal and
+      enforces its case; `flags` expands Hunspell affix flags; `ignorecase`
+      accepts any case without a Terms alert; and `regex` makes the term a
+      pattern"
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Proj
+
+        [*]
+        BasedOnStyles = Vale
+      styles/config/vocabularies/Proj/accept.txt: |
+        Zorbblat
+      styles/config/vocabularies/Proj/vocab.yml: |
+        accept:
+          - Grix.io            # literal: the period is not a wildcard
+          - quxelate: {flags: S}
+          - flimbo:
+              ignorecase: true
+          - '[Bb]rizzle': {regex: true}
+        reject:
+          - k8s
+          - frobnar: {ignorecase: true}
+      page.md: |
+        Zorbblat and Grix.io ran two quxelates, then Flimbo and Brizzle.
+        Grixaio, grix.io, zorbblat, k8s, and FROBNAR are wrong.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:2:1:Vale.Spelling:Did you really mean 'Grixaio'?
+      page.md:2:10:Vale.Terms:Use 'Grix.io' instead of 'grix.io'.
+      page.md:2:19:Vale.Terms:Use 'Zorbblat' instead of 'zorbblat'.
+      page.md:2:29:Vale.Avoid:Avoid using 'k8s'.
+      page.md:2:38:Vale.Avoid:Avoid using 'FROBNAR'.
+
+  - name: vocab-terms-punctuation
+    about: a term that starts or ends with punctuation is found by Terms,
+      which `\b` couldn't do beside a space, and not inside a longer word
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Proj
+
+        [*]
+        BasedOnStyles = Vale
+        Vale.Spelling = NO
+      styles/config/vocabularies/Proj/accept.txt: |
+        .NET
+        C#
+      styles/config/vocabularies/Proj/vocab.yml: |
+        accept:
+          - C++
+      page.md: |
+        We use c++, .net, and c# here.
+        C++x, a.net, and C++, .NET, and C# are fine.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:8:Vale.Terms:Use 'C++' instead of 'c++'.
+      page.md:1:13:Vale.Terms:Use '.NET' instead of '.net'.
+      page.md:1:23:Vale.Terms:Use 'C#' instead of 'c#'.
+
+  - name: vocab-terms-word-template
+    about: with a custom WordTemplate, Terms uses it as written rather than
+      its own boundaries
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Proj
+        WordTemplate = (?:^|\s)(?:%s)(?:\s|$)
+
+        [*]
+        BasedOnStyles = Vale
+        Vale.Spelling = NO
+      styles/config/vocabularies/Proj/accept.txt: |
+        Zorbblat
+      page.md: |
+        A zorbblat here, and zorbblat, there.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:3:Vale.Terms:Use 'Zorbblat' instead of 'zorbblat'.
+
+  - name: spelling-casing-and-code
+    about: a misspelling the dictionary has in another case says so, with the
+      cased form as its fix; one shaped like an identifier says it looks like
+      code, with the format's inline code as its fix; a capitalized-only name,
+      a product name like vSphere, a real misspelling, and plain text keep the
+      usual alert
+    files:
+      _vale: |
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+      page.md: |
+        Push to github, then set apiVersion and created_at in kubernetes on vSphere, not githbu.
+      page.rst: |
+        Push to github, then set apiVersion and created_at in kubernetes on vSphere, not githbu.
+      page.txt: |
+        Push to github, then set apiVersion and created_at in kubernetes on vSphere, not githbu.
+    requires: rst2html
+    args: --output=JSON page.md page.rst page.txt
+    exit: 1
+    want: |
+      {
+        "page.md": [
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "GitHub"
+              ]
+            },
+            "Suggestions": [
+              "GitHub"
+            ],
+            "Span": [
+              9,
+              14
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Use 'GitHub' instead of 'github'.",
+            "Severity": "error",
+            "Match": "github",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "`apiVersion`"
+              ]
+            },
+            "Suggestions": [
+              "`apiVersion`"
+            ],
+            "Span": [
+              26,
+              35
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "'apiVersion' looks like code; format it as code.",
+            "Severity": "error",
+            "Match": "apiVersion",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "`created_at`"
+              ]
+            },
+            "Suggestions": [
+              "`created_at`"
+            ],
+            "Span": [
+              41,
+              50
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "'created_at' looks like code; format it as code.",
+            "Severity": "error",
+            "Match": "created_at",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              55,
+              64
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'kubernetes'?",
+            "Severity": "error",
+            "Match": "kubernetes",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              69,
+              75
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'vSphere'?",
+            "Severity": "error",
+            "Match": "vSphere",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              82,
+              87
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'githbu'?",
+            "Severity": "error",
+            "Match": "githbu",
+            "Line": 1
+          }
+        ],
+        "page.rst": [
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "GitHub"
+              ]
+            },
+            "Suggestions": [
+              "GitHub"
+            ],
+            "Span": [
+              9,
+              14
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Use 'GitHub' instead of 'github'.",
+            "Severity": "error",
+            "Match": "github",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "``apiVersion``"
+              ]
+            },
+            "Suggestions": [
+              "``apiVersion``"
+            ],
+            "Span": [
+              26,
+              35
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "'apiVersion' looks like code; format it as code.",
+            "Severity": "error",
+            "Match": "apiVersion",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "``created_at``"
+              ]
+            },
+            "Suggestions": [
+              "``created_at``"
+            ],
+            "Span": [
+              41,
+              50
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "'created_at' looks like code; format it as code.",
+            "Severity": "error",
+            "Match": "created_at",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              55,
+              64
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'kubernetes'?",
+            "Severity": "error",
+            "Match": "kubernetes",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              69,
+              75
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'vSphere'?",
+            "Severity": "error",
+            "Match": "vSphere",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              82,
+              87
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'githbu'?",
+            "Severity": "error",
+            "Match": "githbu",
+            "Line": 1
+          }
+        ],
+        "page.txt": [
+          {
+            "Action": {
+              "Name": "replace",
+              "Params": [
+                "GitHub"
+              ]
+            },
+            "Suggestions": [
+              "GitHub"
+            ],
+            "Span": [
+              9,
+              14
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Use 'GitHub' instead of 'github'.",
+            "Severity": "error",
+            "Match": "github",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              26,
+              35
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'apiVersion'?",
+            "Severity": "error",
+            "Match": "apiVersion",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              41,
+              50
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'created_at'?",
+            "Severity": "error",
+            "Match": "created_at",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              55,
+              64
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'kubernetes'?",
+            "Severity": "error",
+            "Match": "kubernetes",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              69,
+              75
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'vSphere'?",
+            "Severity": "error",
+            "Match": "vSphere",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "suggest",
+              "Params": [
+                "spellings"
+              ]
+            },
+            "Suggestions": [],
+            "Span": [
+              82,
+              87
+            ],
+            "Check": "Vale.Spelling",
+            "Description": "",
+            "Link": "",
+            "Message": "Did you really mean 'githbu'?",
+            "Severity": "error",
+            "Match": "githbu",
+            "Line": 1
+          }
+        ]
+      }
+
+  - name: vocab-yaml-affix-file
+    about: "#1089 -- `affix` names a project's own .aff, found in
+      config/dictionaries, whose flags `flags` then expands"
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        Vocab = Proj
+
+        [*]
+        BasedOnStyles = Vale
+      styles/config/dictionaries/proj.aff: |
+        SET UTF-8
+        SFX N Y 1
+        SFX N 0 n e
+      styles/config/vocabularies/Proj/vocab.yml: |
+        affix: proj
+        accept:
+          - Zorbblate: {flags: N}
+      page.md: |
+        One Zorbblate, two Zorbblaten, and no Zorbblates.
+    args: page.md
+    exit: 1
+    want: |
+      page.md:1:39:Vale.Spelling:Did you really mean 'Zorbblates'?
+
+  - name: vocab-yaml-replacement
+    about: a vocab.yml entry that maps a term to a replacement stops the run
+      and points to a substitution rule, which is what suggests replacements
+    files:
+      _vale: |
+        StylesPath = styles
+        Vocab = Proj
+
+        [*]
+        BasedOnStyles = Vale
+      styles/config/vocabularies/Proj/vocab.yml: |
+        accept:
+          - Zorbblat
+        reject:
+          - whitelist: allowlist
+      page.md: |
+        Zorbblat.
+    args: --no-color page.md
+    exit: 2
+    want: |
+      styles/config/vocabularies/Proj/vocab.yml:4:E201:'whitelist' maps to 'allowlist', but a vocabulary entry maps to options; for a replacement, use a substitution rule
+
+  - name: vocab-yaml-unknown-flag
+    about: a `flags` option the default affix file doesn't define stops the
+      run at that line
+    files:
+      _vale: |
+        StylesPath = styles
+        Vocab = Proj
+
+        [*]
+        BasedOnStyles = Vale
+      styles/config/vocabularies/Proj/vocab.yml: |
+        accept:
+          - quxelate: {flags: S9}
+      page.md: |
+        Quxelate.
+    args: --no-color page.md
+    exit: 2
+    want: |
+      styles/config/vocabularies/Proj/vocab.yml:2:E201:'9' isn't an affix flag in the default dictionary
+
+  - name: rule-affix-flags
+    about: "#1091 -- a rule that sets `affix` reads each `word/FLAGS` word of
+      a token or swap key, alone or in a phrase, as every form its flags
+      name; an escaped slash is text, and the swap value is used as written"
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = T
+      styles/T/Utilize.yml: |
+        extends: substitution
+        message: "Use '%s' instead of '%s'."
+        affix: en_US-web
+        swap:
+          utilize/DGS: use
+      styles/T/Leverage.yml: |
+        extends: existence
+        message: "Avoid '%s'."
+        affix: en_US-web
+        tokens:
+          - leverage/DGS
+          - and\/or
+          - \bjump/DGS the gun
+      page.md: |
+        We utilize it, it utilizes them, and we utilized and leveraged both.
+        Leverages and leveraging and/or utilization are next.
+        They jumped the gun; we won't jump the gun or the gunwale.
+    args: page.md
+    exit: 0
+    want: |
+      page.md:1:4:T.Utilize:Use 'use' instead of 'utilize'.
+      page.md:1:19:T.Utilize:Use 'use' instead of 'utilizes'.
+      page.md:1:41:T.Utilize:Use 'use' instead of 'utilized'.
+      page.md:1:54:T.Leverage:Avoid 'leveraged'.
+      page.md:2:15:T.Leverage:Avoid 'leveraging'.
+      page.md:2:26:T.Leverage:Avoid 'and/or'.
+      page.md:3:6:T.Leverage:Avoid 'jumped the gun'.
+      page.md:3:31:T.Leverage:Avoid 'jump the gun'.
+
+  - name: rule-affix-file
+    about: a rule's `affix` names a project's own .aff, found in
+      config/dictionaries
+    files:
+      _vale: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = T
+      styles/config/dictionaries/proj.aff: |
+        SET UTF-8
+        SFX N Y 1
+        SFX N 0 n e
+      styles/T/Zorb.yml: |
+        extends: existence
+        message: "Avoid '%s'."
+        affix: proj
+        tokens:
+          - Zorbblate/N
+      page.md: |
+        One Zorbblate, two Zorbblaten, and no Zorbblates.
+    args: page.md
+    exit: 0
+    want: |
+      page.md:1:5:T.Zorb:Avoid 'Zorbblate'.
+      page.md:1:20:T.Zorb:Avoid 'Zorbblaten'.
+
+  - name: rule-affix-unescaped-slash
+    about: in a rule that sets `affix`, a slash that isn't a flag separator
+      stops the run and says how to write it
+    files:
+      _vale: |
+        StylesPath = styles
+
+        [*]
+        BasedOnStyles = T
+      styles/T/Rule.yml: |
+        extends: existence
+        message: "Avoid '%s'."
+        affix: en_US-web
+        tokens:
+          - and/or
+      page.md: |
+        Text.
+    args: --no-color page.md
+    exit: 2
+    want: |
+      styles/T/Rule.yml:5:E201:'and/or': 'o' isn't an affix flag in the default dictionary; write a literal slash as '\/'
+
+  - name: builtin-rule-params
+    about: "a scalar setting reaches the built-in rules as it does one loaded
+      from a file: `Vale.Spelling[split] = YES` checks an identifier's parts,
+      so the misspelled half of `recieveMessage` is reported and the sound
+      half is not. Before, only a level setting reached the built-ins, and
+      the parameter was accepted and ignored."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = Vale
+        Vale.Spelling[split] = YES
+      styles/.keep: ""
+      test.md: |
+        Call recieveMessage, then flushInterval.
+    args: test.md
+    exit: 1
+    want: |
+      test.md:1:6:Vale.Spelling:Did you really mean 'recieve'?

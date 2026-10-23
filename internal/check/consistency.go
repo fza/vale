@@ -2,6 +2,8 @@ package check
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -57,7 +59,9 @@ func NewConsistency(cfg *core.Config, generic baseCheck, path string) (Consisten
 	parts := strings.Split(name, ".")
 	chkKey := parts[len(parts)-1]
 	count := 0
-	for v1, v2 := range rule.Either {
+	// In a fixed order, so the steps run the same way on every run.
+	for _, v1 := range slices.Sorted(maps.Keys(rule.Either)) {
+		v2 := rule.Either[v1]
 		count += 2
 
 		subs := []string{
@@ -69,7 +73,7 @@ func NewConsistency(cfg *core.Config, generic baseCheck, path string) (Consisten
 
 		re, errc := rx.Compile(chkRE)
 		if errc != nil {
-			return rule, core.NewE201FromPosition(errc.Error(), path, 1)
+			return rule, patternError(errc, path, v1, v2)
 		}
 
 		rule.Extends = name

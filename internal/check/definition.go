@@ -195,7 +195,7 @@ func buildRule(cfg *core.Config, generic baseCheck) (Rule, error) {
 	path, ok := generic["path"].(string)
 	if !ok {
 		msg := fmt.Errorf("'%v' is not valid", generic)
-		return Existence{}, core.NewE100("buildRule: path", msg)
+		return Existence{}, core.NewE100("internal", msg)
 	}
 
 	rule, err := newRule(cfg, generic, path)
@@ -207,7 +207,7 @@ func buildRule(cfg *core.Config, generic baseCheck) (Rule, error) {
 	// rule had already fired, with no file or line to point at.
 	if err = checkAction(cfg, rule); err != nil {
 		if path == "internal" {
-			return rule, core.NewE100("buildRule: action", err)
+			return rule, core.NewE100("internal", err)
 		}
 		return rule, core.NewE201FromTarget(err.Error(), "action", path)
 	}
@@ -260,6 +260,9 @@ func newRule(cfg *core.Config, generic baseCheck, path string) (Rule, error) {
 }
 
 func formatMessages(msg string, desc string, subs ...string) (string, string) {
+	for i, sub := range subs {
+		subs[i] = unwrap(sub)
+	}
 	return core.FormatMessage(msg, subs...), core.FormatMessage(desc, subs...)
 }
 
@@ -274,7 +277,7 @@ func re2Loc(blk nlp.Block, loc []int) (string, error) {
 	if !ok {
 		msg := fmt.Errorf("%d (%d:%d)",
 			utf8.RuneCountInString(blk.Text), loc[0], loc[1])
-		return "", core.NewE100("re2loc: bounds", msg)
+		return "", core.NewE100("internal", fmt.Errorf("match out of bounds: %w", msg))
 	}
 
 	return blk.Text[lo:hi], nil
@@ -341,7 +344,7 @@ func parse(file []byte, path string) (map[string]interface{}, error) {
 			groups := r.FindStringSubmatch(err.Error())
 			i, erri := strconv.Atoi(groups[1])
 			if erri != nil {
-				return generic, core.NewE100("addCheck/Atoi", erri)
+				return generic, core.NewE100("internal", erri)
 			}
 			return generic, core.NewE201FromPosition(groups[2], path, i)
 		}
@@ -511,17 +514,6 @@ func updateExceptions(previous []string, current []string, vocab bool) (*rx.Rege
 //
 // Returns nil when there are no multi-word terms (or one fails to compile, in
 // which case `updateExceptions` surfaces the error).
-// loosenPhraseSpacing rewrites the literal whitespace between the words of an
-// accepted phrase as a pattern matching any run of it. A phrase is compiled
-// into a pattern, so its own spacing has to admit whatever spacing the text
-// uses: a writer wraps a line between two words of an accepted phrase, and the
-// phrase means the same thing either way. Matching a single literal space
-// instead reports the component word as a finding, which reads as a rule
-// firing on correct text.
-func loosenPhraseSpacing(term string) string {
-	return strings.Join(strings.Fields(term), `\s+`)
-}
-
 func buildPhraseRe(previous, current []string, vocab bool) *rx.Regexp {
 	terms := append([]string{}, previous...)
 	if vocab {

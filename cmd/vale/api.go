@@ -45,6 +45,17 @@ type Meta struct {
 	URL         string   `json:"url"`
 	Vale        string   `json:"vale_version"`
 	Version     string   `json:"version"`
+
+	// Releases lists the package's releases and the Vale each needs, so
+	// sync can pick one without walking a host's feed. See pkgver.go.
+	Releases []Release `json:"releases"`
+}
+
+// A Release is one entry of a package's release manifest.
+type Release struct {
+	Version string `json:"version"`
+	Vale    string `json:"vale_version"`
+	URL     string `json:"url"`
 }
 
 func init() {

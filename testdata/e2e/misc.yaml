@@ -93,9 +93,9 @@ cases:
     requires: asciidoctor
     exit: 1
     want: |
-      test.adoc:1:3:Vale.Spelling:Did you really mean 'hav'?
+      test.adoc:1:3:Vale.Spelling:Use 'HAV' instead of 'hav'.
       test.adoc:1:21:write-good.E-Prime:Avoid using "that's"
-      test.adoc:4:3:Vale.Spelling:Did you really mean 'hav'?
+      test.adoc:4:3:Vale.Spelling:Use 'HAV' instead of 'hav'.
       test.adoc:4:21:write-good.E-Prime:Avoid using "that's"
       test.md:1:6:write-good.E-Prime:Avoid using "is"
       test.md:1:9:vale.Editorializing:Consider removing 'very'
@@ -281,6 +281,20 @@ cases:
       test.md:13:5:Test.Dashes:Remove the spaces around the dash.
       test.md:15:5:Test.Dashes:Remove the spaces around the dash.
 
+  - name: inline-nbsp
+    about: "A non-breaking or narrow space beside inline markup reaches the
+      rules, and words after a link don't fuse (#1197)."
+    dir: misc/nbsp
+    args: .
+    exit: 1
+    want: |
+      test.md:1:2:Test.Space:' '
+      test.md:1:7:Test.Space:' '
+      test.md:3:2:Test.Space:' '
+      test.md:3:30:Test.Space:' '
+      test.md:5:2:Test.Space:' '
+      test.md:5:30:Test.Space:' '
+
   - name: spelling
     dir: spelling
     args: .
@@ -321,9 +335,7 @@ cases:
     want: |
       test.md:16:24:Vale.Spelling:Did you really mean 'Encryptor'?
       test.md:16:35:Vale.Spelling:Did you really mean 'Jasypt'?
-      test.md:17:25:Vale.Spelling:Did you really mean 'config'?
-      test.md:23:78:Vale.Spelling:Did you really mean 'config'?
-      test.md:23:85:Vale.Spelling:Did you really mean 'json'?
+      test.md:23:85:Vale.Spelling:Use 'JSON' instead of 'json'.
 
   - name: shadowed-by-code-span
     about: a match whose text also appears inside an earlier code span must be

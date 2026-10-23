@@ -3,6 +3,8 @@ package code
 import (
 	"fmt"
 	"regexp"
+	"strings"
+	"sync"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/vale-cli/vale/v3/internal/core"
@@ -46,56 +48,122 @@ type Language struct {
 	// structural, so they are dropped here rather than left for a rule to
 	// exclude by pattern.
 	SkipLiteral func(node *sitter.Node) bool
+
+	// OpensWithName reports a documentation convention in which a comment
+	// opens with the bare name of what it documents, the one position
+	// backticks cannot reach. Go and the C family follow it; a language that
+	// does not would have a comment's first word blanked whenever the line
+	// below happened to use the same word.
+	OpensWithName bool
+	// Directive matches a comment addressed to a tool -- a build constraint,
+	// a linter suppression -- which is dropped rather than read. It is
+	// matched against the comment as written, delimiter included.
+	Directive *regexp.Regexp
+	// Doc masks what the language's documentation convention marks as code:
+	// the tags of Javadoc, the links of rustdoc. See doc.go.
+	Doc func(string) []Mask
+	// DocName is the name a documentation comment is expected to open with,
+	// read from the node it precedes; nil for a language with no such
+	// convention.
+	DocName func(*sitter.Node, []byte) string
 }
 
 // GetLanguageFromExt returns a Language based on the given file extension.
+//
+// The grammar is shared across calls: each call builds a fresh Language,
+// whose queries a View may replace, but the grammar underneath is the same
+// one, and a compiled query is cached against it (see compiledQuery). A
+// fresh grammar handle per call made that cache miss every time.
 func GetLanguageFromExt(ext string) (*Language, error) {
-	switch core.GetNormedExt(ext) {
+	lang, key, err := newLanguage(ext)
+	if err != nil {
+		return nil, err
+	}
+	lang.Parser = sharedGrammar(key, lang.Parser)
+	return lang, nil
+}
+
+// grammars holds the first grammar handle seen for each extension.
+var grammars sync.Map
+
+func sharedGrammar(ext string, fresh *sitter.Language) *sitter.Language {
+	if g, ok := grammars.Load(ext); ok {
+		return g.(*sitter.Language) //nolint:errcheck // only *sitter.Language is stored
+	}
+	g, _ := grammars.LoadOrStore(ext, fresh)
+	return g.(*sitter.Language) //nolint:errcheck // only *sitter.Language is stored
+}
+
+// newLanguage returns the language for ext and the extension it was found
+// under: ext itself when a grammar is specific to it, as the TSX grammar is
+// to `.tsx`, else the normed extension it shares with others.
+func newLanguage(ext string) (*Language, string, error) {
+	ext = strings.ToLower(ext)
+	if lang := languageFor(ext); lang != nil {
+		return lang, ext, nil
+	}
+	if normed := core.GetNormedExt(ext); normed != "" {
+		if lang := languageFor(normed); lang != nil {
+			return lang, normed, nil
+		}
+	}
+	return nil, "", fmt.Errorf("unsupported extension: '%s'", ext)
+}
+
+// languageFor returns the language whose grammar reads ext, or nil.
+func languageFor(ext string) *Language {
+	switch ext {
 	case ".go":
-		return Go(), nil
+		return Go()
 	case ".rs":
-		return Rust(), nil
+		return Rust()
 	case ".py":
-		return Python(), nil
+		return Python()
 	case ".rb":
-		return Ruby(), nil
+		return Ruby()
 	case ".ex":
-		return Elixir(), nil
+		return Elixir()
 	case ".cpp":
-		return Cpp(), nil
+		return Cpp()
 	case ".c":
-		return C(), nil
+		return C()
+	case ".cs":
+		return CSharp()
 	case ".js", ".jsx":
-		return JavaScript(), nil
+		return JavaScript()
 	case ".hs":
-		return Haskell(), nil
+		return Haskell()
 	case ".jl":
-		return Julia(), nil
+		return Julia()
 	case ".java":
-		return Java(), nil
+		return Java()
+	case ".kt":
+		return Kotlin()
 	case ".lua":
-		return Lua(), nil
+		return Lua()
 	case ".php":
-		return PHP(), nil
+		return PHP()
 	case ".ts":
-		return TypeScript(), nil
+		return TypeScript()
 	case ".tsx":
-		return Tsx(), nil
+		return Tsx()
 	case ".proto":
-		return Protobuf(), nil
+		return Protobuf()
 	case ".qml":
-		return QML(), nil
+		return QML()
 	case ".r":
-		return R(), nil
-	case ".yml":
-		return YAML(), nil
+		return R()
+	case ".yml", ".yaml":
+		return YAML()
+	case ".toml":
+		return TOML()
 	case ".css":
-		return CSS(), nil
+		return CSS()
 	case ".sh":
-		return Shell(), nil
+		return Shell()
 	case ".mk":
-		return Makefile(), nil
+		return Makefile()
 	default:
-		return nil, fmt.Errorf("unsupported extension: '%s'", ext)
+		return nil
 	}
 }

@@ -13,3 +13,48 @@ cases:
       test.rst:23:43:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
       test.rst:25:22:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
       test.rst:29:17:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+
+  - name: sphinx
+    about: "#294 -- the body of a directive Docutils does not define is prose:
+      Sphinx's own, and a project's. `[sphinx]` names the ones that are code
+      instead, and the roles whose text is prose. A literal, a code block, a
+      toctree and a `vale off` block are not read."
+    args: sphinx.rst
+    requires: rst2html
+    exit: 1
+    want: |
+      sphinx.rst:4:18:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:7:8:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:11:8:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:15:28:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:27:15:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:27:84:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:32:19:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+      sphinx.rst:44:20:Test.Rule:Use 'BIG Needles' rather than 'BIG needles'.
+
+  - name: hyphenated-literal
+    about: "prose after a hyphenated inline literal is still read. Docutils
+      wraps such a literal in a `pre` span inside the `tt`, and the pair, left
+      in the block's tag history once closed, marked every later text node of
+      the paragraph as literal content."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        [*.rst]
+        Test.Rule = YES
+      styles/Test/Rule.yml: |
+        extends: existence
+        message: "found '%s'"
+        level: error
+        tokens:
+          - however
+      literal.rst: |
+        Using ``a-b`` is supported, however some plugins might use it.
+        Using ``ab`` is supported, however.
+    args: literal.rst
+    requires: rst2html
+    exit: 1
+    want: |
+      literal.rst:1:29:Test.Rule:found 'however'
+      literal.rst:2:28:Test.Rule:found 'however'

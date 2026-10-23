@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/vale-cli/vale/v3/internal/core"
-	"github.com/vale-cli/vale/v3/internal/glob"
+	"github.com/vale-cli/vale/v3/internal/lint/code"
 	"github.com/vale-cli/vale/v3/internal/nlp"
 )
 
@@ -20,7 +20,7 @@ func (l *Linter) hasView(f *core.File) bool {
 		if view.Engine == "tree-sitter" {
 			continue
 		}
-		if sec, err := glob.Compile(syntax); err == nil && sec.Match(f.Path) {
+		if l.Manager.Config.SectionApplies(syntax, f.Held, f.Path) {
 			return true
 		}
 	}
@@ -64,12 +64,31 @@ func (l *Linter) lintRule(f *core.File) error {
 	return l.lintScopedValues(f, found)
 }
 
+// hasCodeView reports whether a tree-sitter view applies to the file.
+func (l *Linter) hasCodeView(f *core.File) bool {
+	for syntax, view := range l.Manager.Config.Views {
+		if view.Engine != "tree-sitter" {
+			continue
+		}
+		if l.Manager.Config.SectionApplies(syntax, f.Held, f.Path) {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Linter) lintData(f *core.File) error {
 	for syntax, view := range l.Manager.Config.Views {
-		sec, err := glob.Compile(syntax)
-		if err != nil {
-			return err
-		} else if sec.Match(f.Path) {
+		if view.Engine == "tree-sitter" {
+			continue
+		}
+		if l.Manager.Config.SectionApplies(syntax, f.Held, f.Path) {
+			// The View says which values are prose. The file's comments
+			// are prose whatever it says, and are read as a source file's.
+			if cerr := l.lintDataComments(f); cerr != nil {
+				return cerr
+			}
+
 			found, berr := view.Apply(f)
 			if berr != nil {
 				return core.NewE201FromTarget(
@@ -84,11 +103,21 @@ func (l *Linter) lintData(f *core.File) error {
 	return nil
 }
 
+// lintDataComments lints the comments of a data file that has a grammar --
+// YAML or TOML -- and does nothing for one that has no comments to read.
+func (l *Linter) lintDataComments(f *core.File) error {
+	if _, err := code.GetLanguageFromExt(f.RealExt); err == nil {
+		return l.lintCode(f)
+	}
+	return nil
+}
+
 func (l *Linter) lintScopedValues(f *core.File, values []core.ScopedValues) error {
 	var err error
 	wholeFile := f.Content
 	srcLines := strings.Split(wholeFile, "\n")
-	last := 0
+	// The file's comments were placed already; only the values' alerts move.
+	last := len(f.Alerts)
 
 	f.Scoped = make(map[string][]string, len(values))
 	for _, match := range values {
@@ -99,6 +128,8 @@ func (l *Linter) lintScopedValues(f *core.File, values []core.ScopedValues) erro
 
 	for _, match := range values {
 		f.SetMetaScope(match.Scope)
+		// Once per scope, not per value: the lookup walks the format table.
+		asCode := isCode(match.Format)
 
 		seen := make(map[string]int)
 		for _, sv := range match.Values {
@@ -161,7 +192,7 @@ func (l *Linter) lintScopedValues(f *core.File, values []core.ScopedValues) erro
 				err = l.lintOrg(f)
 			case match.Format == "adoc":
 				err = l.lintADoc(f)
-			case isCode(match.Format):
+			case asCode:
 				err = l.lintAsCode(f, "."+match.Format)
 			default:
 				err = l.lintLines(f)

@@ -13,12 +13,9 @@ cases:
       test.cc:47:12:Vale.Repetition:'the' is repeated!
       test.go:2:14:Vale.Spelling:Did you really mean 'implments'?
       test.go:10:4:Vale.Spelling:Did you really mean 'Println'?
-      test.go:12:4:Vale.Spelling:Did you really mean 'Println'?
       test.go:12:54:Vale.Spelling:Did you really mean 'oprands'?
-      test.js:28:4:Vale.Spelling:Did you really mean 'getCases'?
       test.py:3:13:Vale.Spelling:Did you really mean 'parap'?
       test.py:13:35:Vale.Spelling:Did you really mean 'vaiable'?
-      test.py:13:58:Vale.Spelling:Did you really mean 'docstrings'?
       test.py:18:29:Vale.Spelling:Did you really mean 'docmentation'?
       test.py:20:20:Vale.Spelling:Did you really mean 'ducmenation'?
       test.py:24:13:Vale.Spelling:Did you really mean 'parapp'?
@@ -39,21 +36,73 @@ cases:
       test.rs:18:11:Vale.Spelling:Did you really mean 'Exmples'?
       test.rs:36:47:Vale.Spelling:Did you really mean 'doof'?
       test2.py:16:5:Vale.Spelling:Did you really mean 'docmentation'?
-      test2.py:60:5:Vale.Spelling:Did you really mean 'traceback'?
-      test2.py:62:53:Vale.Spelling:Did you really mean 'traceback'?
       test2.py:139:11:Vale.Spelling:Did you really mean 'qualname'?
       test2.py:146:22:Vale.Spelling:Did you really mean 'qualname'?
       test2.py:187:38:Vale.Spelling:Did you really mean 'nuber'?
-      test2.py:216:38:Vale.Spelling:Did you really mean 'pragma'?
-      test2.py:219:35:Vale.Spelling:Did you really mean 'noqa'?
       test2.py:246:39:Vale.Spelling:Did you really mean 'vaiable'?
-      test2.py:246:62:Vale.Spelling:Did you really mean 'docstrings'?
       test2.py:252:36:Vale.Spelling:Did you really mean 'vaiable'?
       test2.rs:47:42:Vale.Spelling:Did you really mean 'vrsion'?
       test2.rs:154:5:Vale.Spelling:Did you really mean 'RGArg'?
       test2.rs:165:26:Vale.Spelling:Did you really mean 'argumet'?
       test2.rs:409:38:Vale.Spelling:Did you really mean 'RGArg'?
       test2.rs:2860:34:Vale.Spelling:Did you really mean 'conlicts'?
+
+  - name: comment-columns
+    about: "#1206 -- an alert in a comment is placed by what extraction took
+      off the front of its line, recorded as it was taken: the opener, the
+      indentation, a line comment's own space. Rebuilding the opener's width
+      afterwards put `/**` alerts two columns early."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Z = YES
+      styles/T/Z.yml: |
+        extends: existence
+        message: "'%s'"
+        level: error
+        tokens:
+          - ZEBRA
+      test.js: |
+        /** one ZEBRA here */
+            /** two ZEBRA here */
+        /** three ZEBRA
+         * four ZEBRA
+         */
+        x();
+            // five ZEBRA
+            //   six ZEBRA
+        y();
+      test.ts: |
+        /** one ZEBRA here */
+            /** two ZEBRA here */
+        /** three ZEBRA
+         */
+        x();
+      test.py: |
+        def f():
+            """One ZEBRA here.
+
+            Two ZEBRA here.
+            """
+            x = 1  # three ZEBRA
+    args: test.js test.ts test.py
+    exit: 1
+    want: |
+      test.js:1:9:T.Z:'ZEBRA'
+      test.js:2:13:T.Z:'ZEBRA'
+      test.js:3:11:T.Z:'ZEBRA'
+      test.js:4:9:T.Z:'ZEBRA'
+      test.js:7:13:T.Z:'ZEBRA'
+      test.js:8:14:T.Z:'ZEBRA'
+      test.py:2:12:T.Z:'ZEBRA'
+      test.py:4:9:T.Z:'ZEBRA'
+      test.py:6:20:T.Z:'ZEBRA'
+      test.ts:1:9:T.Z:'ZEBRA'
+      test.ts:2:13:T.Z:'ZEBRA'
+      test.ts:3:11:T.Z:'ZEBRA'
 
   - name: blank-comment-line
     about: |
@@ -97,6 +146,48 @@ cases:
       test.go:6:4:T.Eror:Found 'Eror'.
       test.proto:5:4:T.Eror:Found 'Eror'.
       test.proto:7:4:T.Eror:Found 'Eror'.
+
+  - name: doc-mask-partial-match
+    about: "#1207 -- a doc comment's masks drop an alert whose match lies
+      inside them, like one on the symbol a `{@link}` names; a match that
+      only starts in a mask and runs on into the prose is kept"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.ts]
+        BasedOnStyles = T
+      styles/T/Phrase.yml: |
+        extends: existence
+        message: "Found '%s'."
+        level: error
+        nonword: true
+        tokens:
+          - '\{@link Foo\} runs on'
+      styles/T/Symbol.yml: |
+        extends: existence
+        message: "Found '%s'."
+        level: error
+        tokens:
+          - Foo
+      styles/T/Tag.yml: |
+        extends: existence
+        message: "Found '%s'."
+        level: error
+        nonword: true
+        tokens:
+          - '@link'
+      test.ts: |
+        /**
+         * See {@link Foo} runs on every call. Foo again.
+         */
+        export function f() {}
+    args: test.ts
+    exit: 1
+    want: |
+      test.ts:2:8:T.Phrase:Found '{@link Foo} runs on'.
+      test.ts:2:40:T.Symbol:Found 'Foo'.
 
   - name: tab-indented-block
     about: |

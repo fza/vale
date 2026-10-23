@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func writeFile(t *testing.T, path, body string) string {
@@ -142,13 +144,15 @@ func TestCompare(t *testing.T) {
 		{"exact mismatch", Case{Want: want("1:4:A.B:msg")}, "1:5:A.B:msg\n", false},
 		{"empty want, silent", Case{Want: want("")}, "", true},
 		{"empty want, noisy", Case{Want: want("")}, "1:4:A.B:msg\n", false},
-		{"contains", Case{Contains: "A.B"}, "1:4:A.B:msg\n", true},
-		{"contains, missing", Case{Contains: "A.C"}, "1:4:A.B:msg\n", false},
+		{"contains", Case{Contains: Strings{"A.B"}}, "1:4:A.B:msg\n", true},
+		{"contains, missing", Case{Contains: Strings{"A.C"}}, "1:4:A.B:msg\n", false},
+		{"contains, every excerpt", Case{Contains: Strings{"A.B", "1:9"}}, "1:4:A.B:msg\n1:9:A.C:msg\n", true},
+		{"contains, one missing", Case{Contains: Strings{"A.B", "A.D"}}, "1:4:A.B:msg\n", false},
 		{"absent", Case{Absent: []string{"A.C"}}, "1:4:A.B:msg\n", true},
 		{"absent, present", Case{Absent: []string{"A.B"}}, "1:4:A.B:msg\n", false},
 		{
 			"every assertion has to hold",
-			Case{Contains: "A.B", Absent: []string{"A.C"}},
+			Case{Contains: Strings{"A.B"}, Absent: Strings{"A.C"}},
 			"1:4:A.B:msg\n1:9:A.C:msg\n",
 			false,
 		},
@@ -306,5 +310,40 @@ func TestIsolatedName(t *testing.T) {
 		if got := isolatedName(tt.path, tt.search); got != tt.want {
 			t.Errorf("isolatedName(%q, %v) = %q; want %q", tt.path, tt.search, got, tt.want)
 		}
+	}
+}
+
+// TestStrings reads `contains` and `absent` as one string or a list.
+func TestStrings(t *testing.T) {
+	var c Case
+	src := "name: x\ninput: y\ncontains: T.Rule\nabsent:\n  - T.A\n  - T.B\n"
+	if err := yaml.Unmarshal([]byte(src), &c); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.Contains, Strings{"T.Rule"}) || !slices.Equal(c.Absent, Strings{"T.A", "T.B"}) {
+		t.Errorf("contains = %q, absent = %q", c.Contains, c.Absent)
+	}
+}
+
+// TestLoadUnparsable fails a rule with cases that doesn't parse, at the line
+// YAML names, and still skips foreign YAML that doesn't.
+func TestLoadUnparsable(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	rule := write("Rule.yml", "extends: existence\nmessage: x\ntests:\n  - name: a\n    input: Note: x\n    want: ''\n")
+	if _, err := Load(rule); err == nil || !strings.Contains(err.Error(), "Rule.yml:5:") {
+		t.Errorf("Load(rule) = %v; want an error at line 5", err)
+	}
+
+	eslint := write(".eslintrc.yml", "extends: recommended\nrules:\n  bad: [\n")
+	if cases, err := Load(eslint); err != nil || cases != nil {
+		t.Errorf("Load(.eslintrc.yml) = %v, %v; want it skipped", cases, err)
 	}
 }

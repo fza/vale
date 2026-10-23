@@ -30,7 +30,7 @@ func TestRSTPoolMatchesSpawnedOutput(t *testing.T) {
 		t.Skip("docutils not reachable from the rst2html interpreter")
 	}
 
-	pool, err := newProcPool(argv, rstArgs, 1)
+	pool, err := newProcPool(argv, rstAttrs("{}"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +50,12 @@ func TestRSTPoolMatchesSpawnedOutput(t *testing.T) {
 		".. sectnum::\n\n.. contents::\n\nFirst\n=====\n\n" +
 			"Body with a footnote [1]_.\n\nSecond\n======\n\nMore.\n\n.. [1] The note.\n",
 	} {
-		pooled, cErr := pool.convert(doc, argv, rstArgs)
+		pooled, cErr := pool.convert(doc, argv, rstAttrs("{}"))
 		if cErr != nil {
 			t.Fatalf("pooled convert failed: %v", cErr)
 		}
 
-		spawned, sErr := system.ExecuteWithInput(exe, doc, rstArgs...)
+		spawned, sErr := rstSpawn(exe, doc)
 		if sErr != nil {
 			t.Fatalf("spawned convert failed: %v", sErr)
 		}
@@ -115,7 +115,7 @@ func TestRSTPoolSurvivesABadDocument(t *testing.T) {
 		t.Skip("docutils not reachable from the rst2html interpreter")
 	}
 
-	pool, err := newProcPool(argv, rstArgs, 1)
+	pool, err := newProcPool(argv, rstAttrs("{}"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,11 +123,11 @@ func TestRSTPoolSurvivesABadDocument(t *testing.T) {
 
 	// A malformed directive, which Docutils reports at the severity that
 	// --halt=5 stops on.
-	if _, err = pool.convert(".. |bad\xff| replace::\n", argv, rstArgs); err == nil {
+	if _, err = pool.convert(".. |bad\xff| replace::\n", argv, rstAttrs("{}")); err == nil {
 		t.Log("bad document was accepted; the recovery path is untested here")
 	}
 
-	got, err := pool.convert("still working\n", argv, rstArgs)
+	got, err := pool.convert("still working\n", argv, rstAttrs("{}"))
 	if err != nil {
 		t.Fatalf("pool did not recover: %v", err)
 	}

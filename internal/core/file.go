@@ -3,12 +3,15 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/jdkato/prose/v3/summarize"
@@ -74,8 +77,17 @@ func IsCommentControl(line string) bool {
 
 // A File represents a linted text file.
 type File struct {
-	NLP        nlp.Info          // -
-	Summary    bytes.Buffer      // holds content to be included in summarization checks
+	NLP     nlp.Info     // -
+	Summary bytes.Buffer // holds content to be included in summarization checks
+
+	// SummaryRuns place the summary's text in Content: each piece of prose
+	// written to Summary records where it came from, so that a match found in
+	// the summary can be reported at the text that was counted. Without them
+	// the match is located by searching Content for its text, and a copy in
+	// front matter, a code block or a heading -- none of which the summary
+	// holds -- takes the alert. See #1191.
+	SummaryRuns []nlp.Run
+
 	Alerts     []Alert           // all alerts associated with this file
 	BaseStyles []string          // base style assigned in .vale
 	Lines      []string          // the File's Content split into lines
@@ -86,6 +98,7 @@ type File struct {
 	Path       string            // the full path
 	NormedPath string            // the normalized path
 	Transform  string            // XLST transform
+	Held       map[string]bool   // the conditional sections whose `if` held
 	RealExt    string            // actual file extension
 	Checks     map[string]bool   // syntax-specific checks assigned in .vale
 	Unset      map[string]bool   // keys a section marked UNSET; no global setting applies
@@ -188,23 +201,34 @@ func NewFile(src string, config *Config) (*File, error) {
 	filepaths := []string{path}
 	normed := NormalizePath(path, config.Formats)
 
+	// A conditional section, `[*.md if .Meta.draft]`, applies only where its
+	// condition holds; every lookup below asks SectionApplies.
+	held, err := heldConditions(path, string(fbytes), config)
+	if err != nil {
+		return nil, NewE201FromPosition(err.Error(), path, 1)
+	}
+
 	baseStyles := config.GBaseStyles
+	stylesFrom := "*" // the section baseStyles came from
 	checks := make(map[string]bool)
 	levels := make(map[string]string)
 	unset := make(map[string]bool)
 	var vocab []string
 
+	// `[*]` names vocabularies for every file; their rules are global.
+	vocab = append(vocab, config.SVocab["*"]...)
+
 	// Sections are visited in the order they were written, so a later one
 	// wins -- for this file, and no other. See #965.
 	for _, fp := range filepaths {
 		for _, sec := range config.RuleKeys {
-			pat, found := config.SecToPat[sec]
-			if !found || !pat.Match(fp) {
+			if !config.SectionApplies(sec, held, fp) {
 				continue
 			}
 
 			if styles, declared := config.SBaseStyles[sec]; declared {
-				baseStyles = styles
+				warnDroppedStyles(config, stylesFrom, sec, baseStyles, styles)
+				baseStyles, stylesFrom = styles, sec
 				if len(styles) == 0 {
 					// `BasedOnStyles =` says nothing runs here: earlier
 					// sections no longer apply, and global settings are off.
@@ -244,7 +268,7 @@ func NewFile(src string, config *Config) (*File, error) {
 		lang = code
 	}
 	for _, sec := range config.RuleKeys {
-		if pat, found := config.SecToPat[sec]; found && pat.Match(path) {
+		if config.SectionApplies(sec, held, path) {
 			// Sections are visited in the order they were written, so a
 			// later one wins -- for this file, and no other. See #965.
 			if code, ok := config.FormatToLang[sec]; ok {
@@ -258,7 +282,7 @@ func NewFile(src string, config *Config) (*File, error) {
 		transform = p
 	}
 	for _, sec := range config.RuleKeys {
-		if pat, found := config.SecToPat[sec]; found && pat.Match(path) {
+		if config.SectionApplies(sec, held, path) {
 			// Sections are visited in the order they were written, so a
 			// later one wins -- for this file, and no other. See #965.
 			if p, ok := config.Stylesheets[sec]; ok {
@@ -279,7 +303,7 @@ func NewFile(src string, config *Config) (*File, error) {
 		BaseStyles: baseStyles, Checks: checks, Levels: levels, Unset: unset, Vocab: vocab,
 		Lines: lines, Content: content,
 		Comments: make(map[string]bool), history: make(map[string]int),
-		simple: config.Flags.Simple, Transform: transform,
+		simple: config.Flags.Simple, Transform: transform, Held: held,
 		limits: make(map[string]int), Path: path, Metrics: make(map[string]int),
 		NLP:    nlp.Info{Endpoint: config.NLPEndpoint, Lang: lang},
 		Lookup: lookup, NormedPath: normed,
@@ -354,7 +378,13 @@ func (f *File) MapAlertsToSource() {
 
 // SortedAlerts returns all of f's alerts sorted by line and column.
 func (f *File) SortedAlerts() []Alert {
-	sort.Sort(ByPosition(f.Alerts))
+	// Alerts are added in rule order, and a stable sort keeps that order for
+	// the ones that share a position -- two measurements of the same block,
+	// say. An unstable sort kept it too, but only by accident, for a dozen
+	// alerts or fewer: past that the algorithm changes, and two alerts at
+	// one position came out in an order that depended on how many others
+	// the file had.
+	sort.Stable(ByPosition(f.Alerts))
 	return f.Alerts
 }
 
@@ -392,6 +422,22 @@ func addTextMetrics(params map[string]interface{}, doc *summarize.Document) {
 	params["words"] = doc.NumWords
 	params["polysyllabic_words"] = doc.NumPolysylWords
 	params["syllables"] = doc.NumSyllables
+	params["quote_words"] = float64(nlp.QuotedWords(doc.Content))
+	params["sentence_length_sd"] = sentenceLengthSD(doc)
+
+	// Every score divides by the sentence count, and a block with words but
+	// no sentence would put NaN in the output.
+	if doc.NumSentences == 0 {
+		return
+	}
+	params["automated_readability"] = doc.AutomatedReadability()
+	params["coleman_liau"] = doc.ColemanLiau()
+	params["dale_chall"] = doc.DaleChall()
+	params["flesch_kincaid"] = doc.FleschKincaid()
+	params["flesch_reading_ease"] = doc.FleschReadingEase()
+	params["gunning_fog"] = doc.GunningFog()
+	params["lix"] = doc.LIX()
+	params["smog"] = doc.SMOG()
 }
 
 // FindLoc calculates the line and span of an Alert.
@@ -402,10 +448,11 @@ func (f *File) FindLoc(ctx, s string, pad, count int, a Alert, at int) (int, []i
 	var length int
 	var lines []string
 
-	given := len(ctx)
+	given := ctx
 	for _, s := range a.Offset {
 		ctx, _ = Substitute(ctx, s, '@')
 	}
+	at = maskedOffset(given, ctx, at)
 
 	pos, substring, hit := locateMatch(ctx, s, a, at)
 	if pos < 0 {
@@ -414,7 +461,7 @@ func (f *File) FindLoc(ctx, s string, pad, count int, a Alert, at int) (int, []i
 	}
 	if hit >= 0 {
 		// The Offset masks above map rune to rune; the tail keeps its place.
-		hit += given - len(ctx)
+		hit += len(given) - len(ctx)
 	}
 
 	loc := a.Span
@@ -539,18 +586,6 @@ func spanAt(ctx string, col, begin, end int) []int {
 }
 
 // SetText updates the file's content, lines, and history.
-// CodeExt is the extension that decides which language reads this file's
-// comments. It is the file's own where it has one, and the normed extension
-// otherwise: a build file is named rather than suffixed, so its own extension
-// is empty and names no language.
-func (f *File) CodeExt() string {
-	if f.RealExt != "" {
-		return f.RealExt
-	}
-
-	return f.NormedExt
-}
-
 func (f *File) SetText(s string) {
 	f.Content = s
 	f.Lines = strings.SplitAfter(s, "\n")
@@ -597,12 +632,8 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 		// Before the measurement case: a zero-width match has no text either,
 		// but it does have a place.
 		a.Line, a.Span = f.byteLoc(blk.Context, a.Span[0], a.Span[1], pad)
-	case a.Match == "" && blk.Line >= 0 && blk.Line < len(f.Lines):
-		// A measurement has no text to find. It is reported at the start of
-		// its block's first line: the file's for the summary, the heading's
-		// for a section, the paragraph's for a paragraph.
-		a.Line = blk.Line + 1
-		a.Span = []int{1, 1}
+	case a.Match == "" && f.locateMeasurement(&a, blk, pad):
+		// A measurement has no text to find; locateMeasurement placed it.
 	case strings.HasPrefix(blk.Scope, "raw") && a.Match != "" &&
 		a.Span[0] >= 0 && a.Span[1] <= len(blk.Context) &&
 		blk.Context[a.Span[0]:a.Span[1]] == a.Match:
@@ -644,7 +675,10 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 			a.Line, a.Span = f.assignLoc(ctx, blk, pad, a)
 		}
 		if (!lookup && a.Span[0] < 0) || lookup {
-			a.Line, a.Span, hit = f.FindLoc(ctx, blk.Text, pad, lines, a, blk.Offset)
+			// An earlier alert's mask may have shortened ctx, so the block's
+			// offset into its context is carried over to the masked copy.
+			at := maskedOffset(blk.Context, ctx, blk.Offset)
+			a.Line, a.Span, hit = f.FindLoc(ctx, blk.Text, pad, lines, a, at)
 		}
 	}
 
@@ -685,6 +719,37 @@ func (f *File) AddAlert(a Alert, blk nlp.Block, lines, pad int, lookup bool) {
 			}
 		}
 	}
+}
+
+// locateMeasurement places an alert that has no text to find -- a measurement
+// -- and reports whether it could.
+//
+// It lands at the start of its block's first line: the file's for the summary,
+// the heading's for a section, the paragraph's for a paragraph. Two kinds of
+// block are placed by where they begin instead. A sentence is the one block
+// that can begin mid-line, and it carries its paragraph's line: reported
+// there, every sentence after the first landed on a position already taken
+// and was dropped as a duplicate, so a sentence-scoped metric measured each
+// sentence and reported one. And a block with no line of its own -- plain
+// text is a single block with none, and its paragraphs and sentences inherit
+// that -- has only its offset to say where it is. Plain text is also its own
+// context, so those blocks are placed in the file's content.
+func (f *File) locateMeasurement(a *Alert, blk nlp.Block, pad int) bool {
+	if strings.HasPrefix(blk.Scope, "sentence") || blk.Line < 0 {
+		ctx := blk.Context
+		if ctx == "" {
+			ctx = f.Content
+		}
+		if at := blk.SourceOffset(0); at >= 0 && at < len(ctx) {
+			a.Line, a.Span = f.byteLoc(ctx, at, at, pad)
+			return true
+		}
+	}
+	if blk.Line >= 0 && blk.Line < len(f.Lines) {
+		a.Line, a.Span = blk.Line+1, []int{1, 1}
+		return true
+	}
+	return false
 }
 
 // commentRegion is the span of the source between a comment directive that
@@ -860,4 +925,52 @@ func (f *File) Level(name, compiled string) string {
 		}
 	}
 	return compiled
+}
+
+// sentenceLengthSD is the standard deviation of the words per sentence: how
+// much the sentences vary in length, which a document of one long sentence
+// after another and a document of short ones both put at zero.
+func sentenceLengthSD(doc *summarize.Document) float64 {
+	n := float64(len(doc.Sentences))
+	if n == 0 {
+		return 0
+	}
+	mean := 0.0
+	for _, s := range doc.Sentences {
+		mean += float64(s.Length)
+	}
+	mean /= n
+	sum := 0.0
+	for _, s := range doc.Sentences {
+		d := float64(s.Length) - mean
+		sum += d * d
+	}
+	return math.Sqrt(sum / n)
+}
+
+// droppedWarned holds the pairs of sections warnDroppedStyles has reported.
+var droppedWarned sync.Map
+
+// warnDroppedStyles says, once per pair of sections, when a project's
+// section replaces styles a package's section turned on and leaves some
+// out: the package's own section is in a file the project never sees.
+func warnDroppedStyles(cfg *Config, from, to string, before, after []string) {
+	pkg := packageOf(cfg.StyleSources[from])
+	if pkg == "" || packageOf(cfg.StyleSources[to]) != "" || len(after) == 0 {
+		return
+	}
+	var dropped []string
+	for _, s := range before {
+		if !StringInSlice(s, after) {
+			dropped = append(dropped, s)
+		}
+	}
+	if len(dropped) == 0 {
+		return
+	}
+	if _, seen := droppedWarned.LoadOrStore(from+"\x00"+to, true); seen {
+		return
+	}
+	Warn(fmt.Sprintf("[%s] replaces the styles the %s package turns on for its files (%s). To keep them, list them too: BasedOnStyles = %s",
+		to, pkg, strings.Join(dropped, ", "), strings.Join(append(dropped, after...), ", ")))
 }

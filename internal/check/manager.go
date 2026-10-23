@@ -1,7 +1,6 @@
 package check
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -26,7 +25,7 @@ type Manager struct {
 
 	scopes       map[string]struct{}
 	scopeRules   map[string][]string
-	docs         map[string]cascadia.Sel
+	docs         map[string]cascadia.Matcher
 	rules        map[string]Rule
 	styles       []string
 	needsTagging bool
@@ -43,11 +42,17 @@ func NewManager(config *core.Config) (*Manager, error) {
 		rules:      make(map[string]Rule),
 		scopes:     make(map[string]struct{}),
 		scopeRules: make(map[string][]string),
-		docs:       make(map[string]cascadia.Sel),
+		docs:       make(map[string]cascadia.Matcher),
+	}
+
+	// Named scopes come before the rules that use them.
+	err := config.LoadScopes()
+	if err != nil {
+		return &mgr, err
 	}
 
 	// TODO: Should we only load these if we're using them?
-	err := mgr.loadDefaultRules()
+	err = mgr.loadDefaultRules()
 	if err != nil {
 		return &mgr, err
 	}
@@ -124,7 +129,7 @@ func (mgr *Manager) RuleForAlert(name string) string {
 func (mgr *Manager) AddRuleFromFile(name, path string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return core.NewE100("ReadFile", err)
+		return core.NewE100(path, err)
 	}
 	return mgr.addCheck(content, name, path)
 }
@@ -138,7 +143,7 @@ func (mgr *Manager) Rules() map[string]Rule {
 // walker gives the elements it matches.
 type Selection struct {
 	ID  string
-	Sel cascadia.Sel
+	Sel cascadia.Matcher
 }
 
 // Selections returns every selector the loaded rules declare, in a stable
@@ -351,6 +356,15 @@ func (mgr *Manager) compileCheck(file []byte, chkName, path string) (Rule, bool,
 		return nil, false, err
 	}
 
+	// A named scope stands in for its expression, so it is replaced before
+	// anything reads the scope: validation, the selector registry, and the
+	// walker all see the expression the rule would have written.
+	if scope, sErr := expandScopes(generic["scope"], mgr.Config.Scopes); sErr != nil {
+		return nil, false, core.NewE201FromTarget(sErr.Error(), "scope", path)
+	} else if scope != nil {
+		generic["scope"] = scope
+	}
+
 	// Set default values, if necessary.
 	generic["name"] = chkName
 	generic["path"] = path
@@ -370,7 +384,7 @@ func (mgr *Manager) compileCheck(file []byte, chkName, path string) (Rule, bool,
 	// 30` -- land after inheritance and before the decoder, which coerces the
 	// string and rejects a parameter the rule does not have.
 	for param, val := range mgr.Config.RuleToParams[chkName] {
-		generic[param] = val
+		generic[param] = paramValue(val)
 	}
 	if scope, ok := generic["scope"]; scope == nil || !ok {
 		// Not for `sequence`, which needs to tell an unset scope from an
@@ -451,6 +465,39 @@ func (mgr *Manager) registerCheck(chkName string, rule Rule, taggedPOS bool) err
 	return mgr.AddRule(chkName, rule)
 }
 
+// defaultRule is a built-in rule's definition with the configuration's
+// settings for it applied: its level, and its scalar parameters, so that
+// `Vale.Spelling[split] = YES` reaches the rule the way it reaches one loaded
+// from a file. The definition is copied first; the defaults are shared.
+func (mgr *Manager) defaultRule(name string) baseCheck {
+	generic := baseCheck{}
+	for k, v := range defaultRules[name] {
+		generic[k] = v
+	}
+	full := "Vale." + name
+	if level, ok := mgr.Config.RuleToLevel[full]; ok {
+		generic["level"] = level
+	}
+	for param, val := range mgr.Config.RuleToParams[full] {
+		generic[param] = paramValue(val)
+	}
+	generic["path"] = "internal"
+	return generic
+}
+
+// paramValue is a scalar setting as the rule decoder reads it. YES and NO
+// are how the configuration spells a bool everywhere else, so they are
+// accepted for a bool parameter too; anything else is passed as written.
+func paramValue(val string) string {
+	switch strings.ToUpper(strings.TrimSpace(val)) {
+	case "YES":
+		return "true"
+	case "NO":
+		return "false"
+	}
+	return val
+}
+
 func (mgr *Manager) loadDefaultRules() error {
 	if !mgr.needsStyle("Vale") {
 		return nil
@@ -465,32 +512,15 @@ func (mgr *Manager) loadDefaultRules() error {
 	// The built-in rules answer to `Vale.Rule = NO` the same way a style's do,
 	// and building one is not free: `Vale.Spelling` reads a dictionary off
 	// disk, and `Vale.Terms` compiles a pattern holding the whole vocabulary.
-	if mgr.enabledSomewhere("Vale.Repetition") {
-		repetition := defaultRules["Repetition"]
-		if level, ok := mgr.Config.RuleToLevel["Vale.Repetition"]; ok {
-			repetition["level"] = level
+	for _, name := range []string{"Repetition", "Spelling"} {
+		if !mgr.enabledSomewhere("Vale." + name) {
+			continue
 		}
-		repetition["path"] = "internal"
-
-		rule, err := buildRule(mgr.Config, repetition)
+		rule, err := buildRule(mgr.Config, mgr.defaultRule(name))
 		if err != nil {
 			return err
 		}
-		mgr.rules["Vale.Repetition"] = rule
-	}
-
-	if mgr.enabledSomewhere("Vale.Spelling") {
-		spelling := defaultRules["Spelling"]
-		if level, ok := mgr.Config.RuleToLevel["Vale.Spelling"]; ok {
-			spelling["level"] = level
-		}
-		spelling["path"] = "internal"
-
-		rule, err := buildRule(mgr.Config, spelling)
-		if err != nil {
-			return err
-		}
-		mgr.rules["Vale.Spelling"] = rule
+		mgr.rules["Vale."+name] = rule
 	}
 
 	// TODO: where should this go?
@@ -521,9 +551,13 @@ func (mgr *Manager) loadStyles(styles []string) error {
 
 	for _, s := range need {
 		if !core.StringInSlice(s, found) {
-			return core.NewE100(
-				"loadStyles",
-				errors.New("style '"+s+"' does not exist on StylesPath"))
+			msg := fmt.Sprintf("Style '%s' isn't on the StylesPath (%s).",
+				s, strings.Join(mgr.Config.SearchPaths(), ", "))
+			if pkgs, _ := core.GetPackages(mgr.Config.RootINI); len(pkgs) > 0 {
+				msg += " If it's a package, run `vale sync`."
+			}
+			return core.NewE201FromKey(mgr.Config, "BasedOnStyles",
+				func(v string) bool { return v == s }, msg)
 		}
 	}
 
@@ -567,15 +601,31 @@ func (mgr *Manager) loadVocabRules() {
 
 // addTerms adds a Terms rule, which reports an accepted term in the wrong
 // case, from the given terms.
+//
+// Under the default word template, each term gets its own boundaries: not
+// preceded or followed by a word character. For a term that starts and ends
+// with one, that's `\b`; for `C++` or `.NET`, whose edges `\b` can't match
+// beside a space, it's what lets the term be found at all.
 func (mgr *Manager) addTerms(name string, terms []string) {
 	// Compiling a vocabulary into one pattern is not free, and a vocabulary
 	// rule answers to `Vale.Terms = NO` the same way a style's rule does.
 	if len(terms) == 0 || !mgr.enabledSomewhere(name) {
 		return
 	}
+	own := mgr.Config.WordTemplate == ""
 	swap := vocabSpellings(terms)
+	if own {
+		bounded := make(map[string]string, len(swap))
+		for pattern, spellings := range swap {
+			bounded[`(?<!\w)`+pattern+`(?!\w)`] = spellings
+		}
+		swap = bounded
+	}
 	vocab := cloneRule(defaultRules["Terms"])
 	vocab["name"], vocab["swap"] = name, swap
+	if own {
+		vocab["nonword"] = true
+	}
 	if level, ok := mgr.Config.RuleToLevel[name]; ok {
 		vocab["level"] = level
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 
 	sitter "github.com/smacker/go-tree-sitter"
 )
@@ -17,15 +18,22 @@ type Comment struct {
 	Offset int
 	Scope  string
 	// Strip records, for each line of Text, how many bytes were taken off the
-	// front of the matching Source line. An alert's column is meaningful in
-	// Text; putting it back in Source means adding this.
-	//
-	// Empty for a comment that was never dedented, in which case the caller
-	// falls back to measuring the source line itself.
+	// front of the matching Source line: the opener, the dedent, and a line
+	// comment's own decoration. An alert's column is meaningful in Text;
+	// putting it back in Source means adding this.
 	//
 	// Not serialised: this is bookkeeping for putting an alert back where it
 	// came from, not part of what a comment is.
 	Strip []int `json:"-"`
+	// Format is the markup the comment is written in, from the query's
+	// `type`; empty for plain lines.
+	Format string `json:"-"`
+	// Doc is the name the comment is expected to open with, when it
+	// documents a declaration. See Language.DocName.
+	Doc string `json:"-"`
+	// Masks are the ranges of Text that hold no prose; an alert whose match
+	// lies inside one is dropped. See doc.go.
+	Masks []Mask `json:"-"`
 }
 
 // StripAt returns what came off the front of a line, 1-based as alerts are.
@@ -39,11 +47,15 @@ func (c Comment) StripAt(line int) (int, bool) {
 // doneMerging determines when we should *stop* concatenating line-scoped
 // comments.
 func doneMerging(curr, prev Comment) bool {
-	if prev.Line != curr.Line-1 {
+	switch {
+	case prev.Line != curr.Line-1:
 		// If the comments aren't on consecutive lines, don't merge them.
 		return true
-	} else if prev.Offset != curr.Offset {
+	case prev.Offset != curr.Offset:
 		// If the comments aren't at the same offset, don't merge them.
+		return true
+	case prev.Format != curr.Format:
+		// Two queries with different markup: each is read on its own.
 		return true
 	}
 	return false
@@ -116,8 +128,24 @@ func coalesce(comments []Comment) []Comment {
 			flush()
 			joined = append(joined, comment)
 		} else {
-			tBuf.WriteString(appendLine(comment.Text))
+			// The run's Source lines each begin at their own delimiter, so
+			// what came off this one is its opener plus the space appendLine
+			// trims.
+			text := appendLine(comment.Text)
+			trimmed := len(comment.Text) - len(strings.TrimLeft(comment.Text, " "))
+			strip := trimmed
+			if n, ok := comment.StripAt(1); ok {
+				strip += n
+			}
+			joined[len(joined)-1].Strip = append(joined[len(joined)-1].Strip, strip)
+
+			tBuf.WriteString(text)
 			sBuf.WriteString(appendLine(comment.Source))
+			// The declaration follows the run's last line, so its name
+			// belongs to the run.
+			if comment.Doc != "" {
+				joined[len(joined)-1].Doc = comment.Doc
+			}
 		}
 	}
 
@@ -174,11 +202,11 @@ func GetComments(source []byte, lang *Language) ([]Comment, error) {
 	engine := NewQueryEngine(tree, lang)
 
 	for _, query := range lang.Queries {
-		q, qErr := sitter.NewQuery([]byte(query.Expr), lang.Parser)
+		q, qErr := compiledQuery(lang.Parser, query.Expr)
 		if qErr != nil {
 			return comments, qErr
 		}
-		comments = append(comments, engine.run(query.Name, q, source)...)
+		comments = append(comments, engine.run(query.Name, query.Type, q, source)...)
 	}
 
 	if len(lang.Queries) > 1 {
@@ -188,20 +216,68 @@ func GetComments(source []byte, lang *Language) ([]Comment, error) {
 	}
 
 	comments, literals := splitLiterals(comments)
-	joined := coalesce(dropShebang(comments))
+	joined := coalesce(dropDirectives(dropShebang(comments), lang))
+	for i, c := range joined {
+		if lang.Doc != nil {
+			joined[i].Masks = lang.Doc(c.Text)
+		}
+		if m, ok := leadingMask(c.Text, c.Doc); ok {
+			joined[i].Masks = append(joined[i].Masks, m)
+		}
+	}
 	if len(literals) == 0 {
 		return joined, nil
 	}
 
-	// A literal is never merged into the run of line comments above it, and a
-	// shebang is a comment rather than a string, so both passes are given the
-	// comments alone and the literals are put back in source order after.
+	// A literal is never merged into the run of line comments above it, is
+	// no directive, and carries no documentation convention, so every pass
+	// above is given the comments alone and the literals are put back in
+	// source order after.
 	joined = append(joined, literals...)
 	sort.SliceStable(joined, func(p, q int) bool {
 		return joined[p].Line < joined[q].Line
 	})
 
 	return joined, nil
+}
+
+// queries holds each query compiled once per grammar. Compiling is most of
+// what a query costs, and a notebook asks for the same one once per cell.
+var queries sync.Map
+
+type queryKey struct {
+	lang *sitter.Language
+	expr string
+}
+
+// compiledQuery returns the query compiled for the grammar, compiling it on
+// the first request.
+func compiledQuery(lang *sitter.Language, expr string) (*sitter.Query, error) {
+	key := queryKey{lang, expr}
+	if q, ok := queries.Load(key); ok {
+		return q.(*sitter.Query), nil //nolint:errcheck // only *sitter.Query is stored
+	}
+	q, err := sitter.NewQuery([]byte(expr), lang)
+	if err != nil {
+		return nil, err
+	}
+	queries.Store(key, q)
+	return q, nil
+}
+
+// dropDirectives removes the comments addressed to a tool rather than a
+// reader. See Language.Directive.
+func dropDirectives(comments []Comment, lang *Language) []Comment {
+	if lang.Directive == nil {
+		return comments
+	}
+	kept := comments[:0:0]
+	for _, c := range comments {
+		if !lang.Directive.MatchString(c.Source) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
 }
 
 // splitLiterals separates the string literals from the comments.

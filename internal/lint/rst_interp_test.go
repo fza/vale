@@ -128,3 +128,18 @@ func TestRSTProbeDoesNotSubstituteAnotherPython(t *testing.T) {
 		t.Errorf("rstProbe = %v; want nil, so the run spawns rst2html per file", argv)
 	}
 }
+
+// A script with no shebang at all -- pip's launcher executable on Windows --
+// names nothing, so a Python on PATH that imports Docutils stands in; the
+// spawned fallback could not register a Sphinx project's directives.
+func TestRSTProbeFallsBackForALauncher(t *testing.T) {
+	if pythonWith("docutils") == "" {
+		t.Skip("no python with docutils on PATH")
+	}
+
+	launcher := write(t, t.TempDir(), "rst2html", "MZ\x90\x00not a script\n")
+
+	if argv := rstProbe(launcher); argv == nil {
+		t.Error("rstProbe = nil; want a pool from the Python on PATH")
+	}
+}

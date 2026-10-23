@@ -2,8 +2,11 @@ package lint
 
 import (
 	"index/suffixarray"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vale-cli/vale/v3/internal/nlp"
 )
 
 func TestSubInplace(t *testing.T) {
@@ -157,36 +160,59 @@ func TestWalkerClasses(t *testing.T) {
 // attribute first sent the text's search to the next copy of that URL, wherever
 // in the document it happened to be. See #847.
 func TestWalkerFlush(t *testing.T) {
+	const src = "http://github.com here\nand http://github.com there\n"
+
 	tests := []struct {
 		name    string
-		pending []string
+		src     string
+		pending [][]string
 		text    string
 		want    string
 	}{
 		{
 			name:    "autolink keeps its own bytes",
-			pending: []string{"http://github.com"},
+			pending: [][]string{{"http://github.com"}},
 			text:    "http://github.com",
 			want:    "http://github.com here\nand http://github.com there\n",
 		},
 		{
 			name:    "a link target is masked",
-			pending: []string{"http://github.com"},
+			pending: [][]string{{"http://github.com"}},
 			text:    "read this",
 			want:    "@@@@@@@@@@@@@@@@@ here\nand http://github.com there\n",
 		},
 		{
 			name:    "no text of its own",
-			pending: []string{"http://github.com"},
+			pending: [][]string{{"http://github.com"}},
 			text:    "",
 			want:    "@@@@@@@@@@@@@@@@@ here\nand http://github.com there\n",
 		},
+		// A link target is masked by whichever of its forms the source
+		// holds; a form that isn't there is never masked word by word. See
+		// #1218.
+		{
+			name:    "an encoded target is masked as written",
+			src:     "see [a b](a%20b.md) and a b here\n",
+			pending: [][]string{{"a%20b.md", "a b.md"}},
+			text:    "a b",
+			want:    "see [a b](@@@@@@@@) and a b here\n",
+		},
+		{
+			name:    "a spaced target is masked by its decoded form",
+			src:     "see [a b](<a b.md>) and a b here\n",
+			pending: [][]string{{"a%20b.md", "a b.md"}},
+			text:    "a b",
+			want:    "see [a b](<@@@@@@>) and a b here\n",
+		},
 	}
 
-	const src = "http://github.com here\nand http://github.com there\n"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &walker{context: []byte(src), pending: tt.pending}
+			text := tt.src
+			if text == "" {
+				text = src
+			}
+			w := &walker{context: []byte(text), pending: tt.pending}
 
 			w.flush(tt.text)
 
@@ -220,7 +246,7 @@ func TestFirstMatchesScan(t *testing.T) {
 	check("before masking")
 	for i := 0; i < 60; i++ {
 		for _, n := range []string{"Click here", "Click", "Übung macht den Meister.", "the end", "line"} {
-			w.sub(n, '@')
+			w.sub(n)
 			check("after masking " + n)
 		}
 	}
@@ -246,5 +272,34 @@ func TestAdvanceWithIndexMatchesScan(t *testing.T) {
 			plain.append(text)
 			indexed.append(text)
 		}
+	}
+}
+
+// A block whose lines wrap into indented or quoted source lines is placed
+// by runs, one per line, and the first copy found is its own, not a later
+// unindented copy of the same text.
+func TestWrappedRuns(t *testing.T) {
+	ctx := "- The item opens. The report was\n  generated last night.\n\nThe report was\ngenerated last night.\n"
+	text := "The report was\ngenerated last night."
+
+	runs, end := wrappedRuns(text, ctx, 0)
+	want := []nlp.Run{{At: 0, Src: 18, N: 14}, {At: 15, Src: 35, N: 21}}
+	if !reflect.DeepEqual(runs, want) || end != 56 {
+		t.Fatalf("wrappedRuns = %v, %d; want %v, 56", runs, end, want)
+	}
+	for _, r := range runs {
+		if got := ctx[r.Src : r.Src+r.N]; got != text[r.At:r.At+r.N] {
+			t.Errorf("run %v places %q", r, got)
+		}
+	}
+
+	quoted := "> The report was\n> generated last night.\n"
+	runs, _ = wrappedRuns(text, quoted, 0)
+	if wantQuoted := []nlp.Run{{At: 0, Src: 2, N: 14}, {At: 15, Src: 19, N: 21}}; !reflect.DeepEqual(runs, wantQuoted) {
+		t.Errorf("quoted: wrappedRuns = %v, want %v", runs, wantQuoted)
+	}
+
+	if runs, _ = wrappedRuns("not here\nat all", ctx, 0); runs != nil {
+		t.Errorf("absent text was placed: %v", runs)
 	}
 }

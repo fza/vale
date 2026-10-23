@@ -29,8 +29,14 @@ func Go() *Language {
   (raw_string_literal)
 ] @literal`, Type: ""},
 		},
-		Padding:     cStyle,
-		SkipLiteral: goStructuralLiteral,
+		Padding:       cStyle,
+		SkipLiteral:   goStructuralLiteral,
+		OpensWithName: true,
+		// A doc comment opens with the name it documents and links to
+		// others in brackets; a `//go:` line is a directive.
+		Directive: goDirective,
+		Doc:       GoDoc,
+		DocName:   goDocName,
 	}
 }
 

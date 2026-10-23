@@ -69,15 +69,17 @@ type walker struct {
 	// use to sequentially update our context.
 	queue []string
 
-	// tagHistory holds the HTML tags we encounter in a given block -- e.g.,
-	// if we see <ul>, <li>, <p>, we'd get tagHistory = [ul li p]. It's reset
-	// on every non-inline end tag.
+	// tagHistory holds the HTML tags open around the current text in a given
+	// block -- e.g., if we see <ul>, <li>, <p>, we'd get tagHistory = [ul li
+	// p]. An inline tag is popped when it closes; the history is reset on
+	// every non-inline end tag.
 	tagHistory []string
 
-	// clsHistory holds the `class` of each tag in tagHistory, at the same
-	// index, so that a block can be scoped by the classes enclosing it. Both
-	// are reset together, so this is a handful of strings at a time rather
-	// than anything that accumulates across the document.
+	// clsHistory holds the `class` of each tag opened in the block, inline
+	// ones included after they close, so that a block can be scoped by the
+	// classes enclosing it and by those of the elements it holds. Both are
+	// reset together, so this is a handful of strings at a time rather than
+	// anything that accumulates across the document.
 	clsHistory []string
 
 	// idsHistory holds the selections marked on the tags in tagHistory, and
@@ -124,7 +126,14 @@ type walker struct {
 	// masking the attribute leaves the text token to find its string somewhere
 	// else in the document -- and `idx`, which only moves forward, then places
 	// every later block on that line. See #847.
-	pending []string
+	//
+	// Each value is a list of the forms it may take in the source: a link
+	// target as the converter wrote it and, when it differs, decoded, since a
+	// converter percent-encodes a space or a non-ASCII character the author
+	// wrote as is. The first form found whole is masked; a form that isn't
+	// there must not be masked word by word, since its words land on prose
+	// elsewhere in the document. See #1218.
+	pending [][]string
 
 	begin int
 	end   int
@@ -204,12 +213,13 @@ func (w *walker) lineAt(pos int) int {
 	return w.nlCount
 }
 
-func (w *walker) sub(sub string, char rune) bool {
+// sub masks the first occurrence of sub still present in the context.
+func (w *walker) sub(sub string) bool {
 	idx := w.first(sub)
 	if idx < 0 {
 		return false
 	}
-	maskAt(w.context, idx, sub, char)
+	maskAt(w.context, idx, sub, '@')
 	return true
 }
 
@@ -217,10 +227,10 @@ func (w *walker) update(txt string, tokt html.TokenType) {
 	var found bool
 	if (tokt == html.TextToken || tokt == html.CommentToken) && txt != "" {
 		for _, s := range strings.Split(txt, "\n") {
-			found = w.sub(s, '@')
+			found = w.sub(s)
 			if !found && w.ext != ".adoc" {
 				for _, f := range strings.Fields(s) {
-					_ = w.sub(f, '@')
+					_ = w.sub(f)
 				}
 			}
 		}
@@ -233,9 +243,19 @@ func (w *walker) update(txt string, tokt html.TokenType) {
 // is dropped rather than masked, because the two are one run of source and
 // masking it twice consumes an occurrence that belongs to something else.
 func (w *walker) flush(text string) {
-	for _, val := range w.pending {
-		if val != text {
-			w.update(val, html.TextToken)
+	for _, forms := range w.pending {
+		if core.StringInSlice(text, forms) {
+			continue
+		}
+		found := false
+		for _, form := range forms {
+			if w.sub(form) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			w.update(forms[0], html.TextToken)
 		}
 	}
 	w.pending = nil
@@ -277,6 +297,18 @@ func (w *walker) addTag(tag, class, marks string) {
 	w.clsHistory = append(w.clsHistory, class)
 	w.idsHistory = append(w.idsHistory, strings.Fields(marks)...)
 	w.activeTag = tag
+}
+
+// popTag forgets an inline tag once it closes, so that the text after it is
+// not read as inside it: Docutils wraps a hyphenated literal in
+// `<tt><span class="pre">`, and with the pair left in the history every
+// later text node of the paragraph passed for literal content. The tag's
+// class stays in clsHistory: an inline element's class reaches the scope of
+// the block holding it, which is how a QDoc `\span {header}` is targeted.
+func (w *walker) popTag(tag string) {
+	if n := len(w.tagHistory); n > 0 && w.tagHistory[n-1] == tag {
+		w.tagHistory = w.tagHistory[:n-1]
+	}
 }
 
 // An openTag is one still-open block container.
@@ -363,9 +395,21 @@ func (w *walker) count(metric string) {
 
 // closeSelection returns the selection whose element has just closed, once
 // the walker has flushed the element's own text, or nil.
+//
+// The aggregate leaves the open set here rather than when the end tag was
+// read: the flush between the two is what gathers a paragraph's or heading's
+// own text, and a selection on one gathered nothing when it was popped first.
 func (w *walker) closeSelection() *aggregate {
 	a := w.closed
 	w.closed = nil
+	if a != nil {
+		for i := len(w.aggs) - 1; i >= 0; i-- {
+			if w.aggs[i] == a {
+				w.aggs = append(w.aggs[:i], w.aggs[i+1:]...)
+				break
+			}
+		}
+	}
 	return a
 }
 
@@ -378,7 +422,6 @@ func (w *walker) unclose(tag string) {
 		if w.enclosing[i].tag == tag {
 			if a := w.enclosing[i].agg; a != nil {
 				w.closed = a
-				w.aggs = w.aggs[:len(w.aggs)-1]
 			}
 			w.enclosing = append(w.enclosing[:i], w.enclosing[i+1:]...)
 			return
@@ -465,9 +508,82 @@ func (w *walker) block(text, scope string, shift int) nlp.Block {
 	// place a match inside it. See #502.
 	if b.Offset < 0 {
 		b.Runs = w.runs(shift, len(text))
+		if len(b.Runs) == 0 {
+			b.Runs = w.locateWrapped(text)
+		}
 	}
 
 	return b
+}
+
+// locateWrapped places a block whose lines are in the source but whose line
+// breaks are followed there by a list item's indentation or a blockquote's
+// `>`, which the text does not carry. Each line becomes a run, so a match
+// across the break is placed by its bytes. Without this the block is found
+// by searching for its text, and a copy of the same text written without
+// the indentation -- a paragraph after the list -- takes the alert. See #1203.
+func (w *walker) locateWrapped(text string) []nlp.Run {
+	if !strings.Contains(text, "\n") || isMask(text) {
+		return nil
+	}
+	ctx := w.getCtx()
+	if w.cursor > len(ctx) {
+		return nil
+	}
+
+	runs, end := wrappedRuns(text, ctx, w.cursor)
+	if runs == nil {
+		return nil
+	}
+	w.cursor = end
+	return runs
+}
+
+// wrappedRuns finds text in ctx at or after from, allowing each of its line
+// breaks to be followed in ctx by indentation or `>` markers, and returns the
+// runs placing each line, plus the index just past the match.
+func wrappedRuns(text, ctx string, from int) ([]nlp.Run, int) {
+	lines := strings.Split(text, "\n")
+	for start := from; start <= len(ctx); {
+		i := strings.Index(ctx[start:], lines[0])
+		if i < 0 {
+			return nil, -1
+		}
+		at := start + i
+		if runs, end, ok := matchWrapped(lines, ctx, at); ok {
+			return runs, end
+		}
+		start = at + 1
+	}
+	return nil, -1
+}
+
+// matchWrapped matches lines against ctx from at, each after the first
+// preceded by a newline and any indentation or quote markers.
+func matchWrapped(lines []string, ctx string, at int) ([]nlp.Run, int, bool) {
+	var runs []nlp.Run
+	src, txt := at, 0
+	for i, line := range lines {
+		if i > 0 {
+			if src >= len(ctx) || ctx[src] != '\n' {
+				return nil, 0, false
+			}
+			src++
+			txt++ // the text's own newline
+			for src < len(ctx) && (ctx[src] == ' ' || ctx[src] == '\t' || ctx[src] == '>') {
+				src++
+			}
+		}
+		if !strings.HasPrefix(ctx[src:], line) {
+			return nil, 0, false
+		}
+		if line != "" {
+			runs = append(runs, nlp.Run{At: txt, Src: src, N: len(line)})
+		}
+		src += len(line)
+		txt += len(line)
+	}
+	return runs, src, true
 }
 
 // isMask reports whether text is nothing but mask characters, as the text
@@ -639,12 +755,14 @@ func (w *walker) sourceOffset(i int) int {
 	return -1
 }
 
+// walk trims only ASCII whitespace: a non-breaking or narrow space beside
+// inline markup is text the rules should see, not a separator (#1197).
 func (w *walker) walk() (html.TokenType, html.Token, string) {
 	tokt := w.z.Next()
 	// Raw is captured before Token, which reuses the buffer it points into.
 	w.rawTok = string(w.z.Raw())
 	tok := w.z.Token()
-	return tokt, tok, html.UnescapeString(strings.TrimSpace(tok.Data))
+	return tokt, tok, html.UnescapeString(strings.Trim(tok.Data, " \t\n\r\f\v"))
 }
 
 // raw is the source text of the token walk just returned. A directive written as
@@ -673,10 +791,13 @@ func (w *walker) replaceToks(tok html.Token) {
 		}
 		for _, a := range tok.Attr {
 			if core.StringInSlice(a.Key, names) {
+				forms := []string{a.Val}
 				if a.Key == "href" {
-					a.Val, _ = url.QueryUnescape(a.Val)
+					if decoded, err := url.PathUnescape(a.Val); err == nil && decoded != a.Val {
+						forms = append(forms, decoded)
+					}
 				}
-				w.pending = append(w.pending, a.Val)
+				w.pending = append(w.pending, forms)
 			}
 		}
 	}

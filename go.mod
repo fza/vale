@@ -7,7 +7,7 @@ require (
 	github.com/adrg/frontmatter v0.2.0
 	github.com/adrg/strutil v0.3.1
 	github.com/adrg/xdg v0.5.3
-	github.com/andybalholm/cascadia v1.3.5
+	github.com/andybalholm/cascadia v1.3.6-0.20260923003020-d56114046656
 	github.com/bmatcuk/doublestar/v4 v4.7.1
 	github.com/d5/tengo/v2 v2.17.0
 	github.com/errata-ai/ini v1.63.0
@@ -25,7 +25,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/pflag v1.0.5
 	github.com/tomwright/dasel/v2 v2.8.1
-	github.com/tomwright/dasel/v3 v3.10.1
+	github.com/tomwright/dasel/v3 v3.11.2
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8
 	golang.org/x/net v0.57.0
@@ -41,7 +41,7 @@ require (
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/MarvinJWendt/testza v0.4.2 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.3.1 // indirect
+	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/atomicgo/cursor v0.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/displaywidth v0.10.0 // indirect

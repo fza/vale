@@ -54,7 +54,7 @@ func doLint(args []string, l *lint.Linter, glob string) ([]*core.File, error) {
 			status := looksLikeStdin(file)
 			if status == 1 {
 				return linted, core.NewE100(
-					"doLint",
+					"input",
 					fmt.Errorf("argument '%s' does not exist", file),
 				)
 			}
@@ -67,11 +67,11 @@ func doLint(args []string, l *lint.Linter, glob string) ([]*core.File, error) {
 		// $ cat file.md | vale
 		stdin, readErr := io.ReadAll(os.Stdin)
 		if readErr != nil {
-			return linted, core.NewE100("doLint", readErr)
+			return linted, core.NewE100("stdin", readErr)
 		}
 		linted, err = l.LintString(string(stdin))
 		if err != nil {
-			return linted, core.NewE100("doLint", err)
+			return linted, core.NewE100("stdin", err)
 		}
 	}
 
@@ -186,28 +186,35 @@ func main() {
 		}
 	}
 
+	// Documents that couldn't be linted are reported after the alerts of the
+	// rest, and the run exits as an error.
 	linted, err := doLint(args, linter, Flags.Glob)
-	if err != nil {
+	var docErrs lint.DocumentErrors
+	if err != nil && !errors.As(err, &docErrs) {
 		handleError(err)
 	}
 
-	if config.Flags.Counts && config.Flags.Output == "JSON" {
-		hasErrors := PrintJSONAlertsWithCounts(linted, countAlerts(linter.Manager, linted))
+	exit := func(hasErrors bool) {
+		for _, e := range docErrs {
+			ShowError(e, Flags.Output, os.Stderr)
+		}
 		stopProfiling()
-		if hasErrors && !Flags.NoExit {
+		switch {
+		case len(docErrs) > 0:
+			os.Exit(2)
+		case hasErrors && !Flags.NoExit:
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+
+	if config.Flags.Counts && config.Flags.Output == "JSON" {
+		exit(PrintJSONAlertsWithCounts(linted, countAlerts(linter.Manager, linted)))
 	}
 
 	hasErrors, err := PrintAlerts(linted, config)
 	if err != nil {
 		handleError(err)
 	}
-
-	stopProfiling()
-	if hasErrors && !Flags.NoExit {
-		os.Exit(1)
-	}
-	os.Exit(0)
+	exit(hasErrors)
 }

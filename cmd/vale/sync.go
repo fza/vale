@@ -19,14 +19,14 @@ func initPath(cfg *core.Config) error {
 	if !system.IsDir(stylesPath) {
 		if err := os.MkdirAll(stylesPath, os.ModePerm); err != nil {
 			e := fmt.Errorf("unable to initialize StylesPath (value = '%s')", stylesPath)
-			return core.NewE100("initPath", e)
+			return core.NewE100("sync", e)
 		}
 	}
 
 	// Remove any existing .vale-config directory.
 	err := os.RemoveAll(filepath.Join(stylesPath, core.PipeDir))
 	if err != nil {
-		return core.NewE100("initPath", err)
+		return core.NewE100("sync", err)
 	}
 
 	return nil
@@ -82,10 +82,45 @@ func download(name, url, styles string, index int) error {
 		return core.NewE100("download", err)
 	}
 
+	// The release that landed may need a newer Vale than this one; see
+	// pkgver.go for the one that gets installed instead.
+	if dir, err = supportedRelease(name, url, dir); err != nil {
+		return err
+	}
+
 	return installPkg(dir, name, styles, index)
 }
 
+// pkgRoot returns the entry in dir that holds the package named name: an
+// exact match, or failing that one that differs only in case.
+//
+// A remote package is named after its URL, and GitHub serves a release asset
+// under any casing of its name, so the directory inside the archive may not
+// match. See #1181.
+func pkgRoot(dir, name string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return name
+		}
+	}
+
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), name) {
+			return entry.Name()
+		}
+	}
+
+	return name
+}
+
 func installPkg(dir, name, styles string, index int) error {
+	name = pkgRoot(dir, name)
+
 	root := filepath.Join(dir, name)
 	path := filepath.Join(root, "styles")
 	pipe := filepath.Join(styles, core.PipeDir)

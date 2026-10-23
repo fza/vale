@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -97,7 +96,7 @@ func from(provider ConfigSrc, src string, cfg *Config, dry bool) (*ini.File, err
 		return loadStdin(src, cfg, dry)
 	default:
 		return nil, NewE100(
-			"source/From", fmt.Errorf("unknown provider '%v'", provider))
+			"config", fmt.Errorf("unknown provider '%v'", provider))
 	}
 }
 
@@ -123,7 +122,7 @@ func validateFlags(cfg *Config) error {
 func loadStdin(src string, cfg *Config, dry bool) (*ini.File, error) {
 	uCfg, err := shadowLoad([]byte(src))
 	if err != nil {
-		return nil, NewE100("loadStdin", err)
+		return nil, NewE100("config", err)
 	}
 	return processConfig(uCfg, cfg, dry)
 }
@@ -154,11 +153,12 @@ func loadINI(cfg *Config, dry bool) (*ini.File, error) {
 		cfg.AddConfigFile(defaultCfg)
 	}
 
-	base, err := loadConfig(configNames)
+	base, root, err := loadConfig(configNames)
 	if err != nil {
-		return nil, NewE100("loadINI/homedir", err)
+		return nil, NewE100("config", err)
 	}
 	cfg.RootINI = base
+	cfg.RootDir = root
 
 	if cfg.Flags.Sources != "" {
 		// NOTE: This case shouldn't be accessible from the CLI, but it can
@@ -172,10 +172,12 @@ func loadINI(cfg *Config, dry bool) (*ini.File, error) {
 		// We've been given a value through `--config`.
 		sources = append(sources, cfg.Flags.Path)
 		cfg.AddConfigFile(cfg.Flags.Path)
+		cfg.setRoot(cfg.Flags.Path)
 	} else if fromEnv, hasEnv := os.LookupEnv("VALE_CONFIG_PATH"); hasEnv {
 		// We've been given a value through `VALE_CONFIG_PATH`.
 		sources = append(sources, fromEnv)
 		cfg.AddConfigFile(fromEnv)
+		cfg.setRoot(fromEnv)
 	} else if base != "" {
 		// We're using a config file found using a local search process.
 		sources = append(sources, base)
@@ -186,6 +188,7 @@ func loadINI(cfg *Config, dry bool) (*ini.File, error) {
 		sources = append(sources, defaultCfg)
 		cfg.Flags.Local = true
 		cfg.AddConfigFile(defaultCfg)
+		cfg.setRoot(defaultCfg)
 	}
 
 	if StringInSlice(cfg.Flags.AlertLevel, AlertLevels) {
@@ -198,30 +201,30 @@ func loadINI(cfg *Config, dry bool) (*ini.File, error) {
 
 	uCfg, err = processSources(cfg, sources)
 	if err != nil {
-		return nil, NewE100("config pipeline failed", err)
+		return nil, NewE100("config", err)
 	}
 	return processConfig(uCfg, cfg, dry)
 }
 
-// loadConfig loads the .vale file. It checks the ancestors of the current
-// directory, stopping on the first occurrence of a .vale or _vale file. If
-// no ancestor of the current directory has a configuration file, it checks
-// the user's home directory for a configuration file.
-func loadConfig(names []string) (string, error) {
+// loadConfig finds the project's config file and the directory it was found
+// at, which is the project root. It checks the current directory and its
+// ancestors for one of names, then `.config/vale.ini`, and falls back to the
+// user's home directory.
+func loadConfig(names []string) (string, string, error) {
 	var parent string
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	for {
 		parent = filepath.Dir(cwd)
 
-		for _, name := range names {
-			loc := path.Join(cwd, name)
+		for _, name := range append(names, nestedConfigNames...) {
+			loc := filepath.Join(cwd, name)
 			if system.FileExists(loc) && !system.IsDir(loc) {
-				return loc, nil
+				return loc, cwd, nil
 			}
 		}
 
@@ -233,15 +236,15 @@ func loadConfig(names []string) (string, error) {
 
 	homeDir, _ := os.UserHomeDir()
 	if homeDir == "" {
-		return "", nil
+		return "", "", nil
 	}
 
 	for _, name := range names {
-		loc := path.Join(homeDir, name)
+		loc := filepath.Join(homeDir, name)
 		if system.FileExists(loc) && !system.IsDir(loc) {
-			return loc, nil
+			return loc, homeDir, nil
 		}
 	}
 
-	return "", nil
+	return "", "", nil
 }

@@ -463,13 +463,19 @@ func newPart(srcLines []string, sp scalarPos, offset int) Part {
 
 // scalarResolver maps extracted string values back to source positions by
 // consuming entries from a flat, document-ordered list of scalars.
+// A scalarResolver hands out scalars by value, each once, in document order.
+// The scalars are indexed by value up front: scanning the list for every
+// value made a large document quadratic to place.
 type scalarResolver struct {
-	scalars []scalarPos
-	used    map[int]bool
+	byValue map[string][]scalarPos
 }
 
 func newScalarResolver(scalars []scalarPos) *scalarResolver {
-	return &scalarResolver{scalars: scalars, used: map[int]bool{}}
+	r := &scalarResolver{byValue: make(map[string][]scalarPos)}
+	for _, s := range scalars {
+		r.byValue[s.Value] = append(r.byValue[s.Value], s)
+	}
+	return r
 }
 
 // locate returns the first unconsumed scalar matching value, and false when
@@ -478,16 +484,12 @@ func (r *scalarResolver) locate(value string) (scalarPos, bool) {
 	if r == nil {
 		return scalarPos{}, false
 	}
-	for i, s := range r.scalars {
-		if r.used[i] {
-			continue
-		}
-		if s.Value == value {
-			r.used[i] = true
-			return s, true
-		}
+	queue := r.byValue[value]
+	if len(queue) == 0 {
+		return scalarPos{}, false
 	}
-	return scalarPos{}, false
+	r.byValue[value] = queue[1:]
+	return queue[0], true
 }
 
 // walkYAMLScalars flattens a yaml.v3 node tree into a document-ordered list

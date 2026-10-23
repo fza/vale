@@ -88,10 +88,10 @@ func TestMdxHTML(t *testing.T) {
 			[]string{"mdxNode", "note"},
 		},
 		{
-			"multiline attributes",
+			"multiline attributes render as nothing, like a container's tags",
 			"<Component\n  open\n  x={1}\n  icon={<Icon />}\n/>\n\nProse here.\n",
-			[]string{`<pre><code class="mdxNode mdxJsxFlowElement">`, "<p>Prose here.</p>"},
-			[]string{"<p><Component"},
+			[]string{"<p>Prose here.</p>"},
+			[]string{"<p><Component", "x={1}", "mdxJsxFlowElement"},
 		},
 		{
 			"inline JSX children stay prose",
@@ -183,6 +183,42 @@ func TestMdxHTML(t *testing.T) {
 			[]string{`<div class="my-Component">`, "<p>Text here.</p>", "<p>Prose here.</p>"},
 			[]string{"my.Component<"},
 		},
+		{
+			"an escaped quote inside an attribute expression",
+			"<Table rows={[{d: 'the cluster\\'s version', e: \"a \\\"quoted\\\" word\"}]} />\n\nProse here.\n",
+			[]string{`<code class="mdxNode mdxJsxFlowElement">`, "<p>Prose here.</p>"},
+			[]string{"<p>Prose here.</p></code>"},
+		},
+		{
+			"an export whose template literal spans lines",
+			"export const c = `a(\n  \\`b\\`, {x}\n)`;\n\nProse here.\n",
+			[]string{`<pre><code class="mdxNode mdxjsEsm">`, "<p>Prose here.</p>"},
+			[]string{"<p>export", "<p>)`"},
+		},
+		{
+			"a fragment with an apostrophe inside an attribute expression",
+			"<C\n  title={<><Code>\n    X\n  </Code> d'env (note)</>\n  }\n>\n  Body here.\n</C>\n\nProse here.\n",
+			[]string{"<p>Body here.</p>", "<p>Prose here.</p>"},
+			[]string{"<p>X", "<p>d'env"},
+		},
+		{
+			"JSX text inside a flow expression",
+			"{\n\n<table><tr><td>(per month) don't</td></tr></table>\n\n}\n\nProse here.\n",
+			[]string{`<pre><code class="mdxNode mdxFlowExpression">`, "<p>Prose here.</p>"},
+			[]string{"<p>(per", "<p>}"},
+		},
+		{
+			"JSX returned from a function inside an expression",
+			"{(() => { return <b>don't</b> })()}\n\nProse here.\n",
+			[]string{`<code class="mdxNode mdxFlowExpression">`, "<p>Prose here.</p>"},
+			[]string{"<p>{("},
+		},
+		{
+			"a type argument inside an expression is not JSX",
+			"{useState<string>('x')}\n\nProse here.\n",
+			[]string{`<code class="mdxNode mdxFlowExpression">`, "<p>Prose here.</p>"},
+			[]string{"<p>{use"},
+		},
 	}
 
 	for _, c := range cases {
@@ -212,16 +248,18 @@ func TestMdxHTML(t *testing.T) {
 // walker does see -- ESM, expressions, fences -- is left for it, and the
 // prose and comments are never touched.
 func TestMdxTagMasks(t *testing.T) {
-	src := "import A from './a'\n\n<Update rss={{ title:\"Same words\" }}>\n\n## Same words\n\n</Update>\n\n{/* vale off */}\n\nA <Badge color=\"red\">tag</Badge> and {props.x} here.\n\n```js\nconst y = 1\n```\n"
+	src := "import A from './a'\n\n<Update rss={{ title:\"Same words\" }}>\n\n## Same words\n\n</Update>\n\n{/* vale off */}\n\nA <Badge color=\"red\">tag</Badge> and {props.x} here.\n\n```js\nconst y = 1\n```\n\n<Card\n  title={'Alt words'}\n/>\n\nAlt words again.\n"
 	doc := goldMdx.Parser().Parse(text.NewReader([]byte(src)))
 	got := maskSpans(src, mdxTagMasks(doc))
 
-	for _, absent := range []string{"rss=", "title:", "</Update>", "color=", "</Badge>"} {
+	// A childless element spanning lines is tags and nothing else, masked like
+	// a container's tags and rendered as nothing.
+	for _, absent := range []string{"rss=", "title:", "</Update>", "color=", "</Badge>", "title={'Alt words'}"} {
 		if strings.Contains(got, absent) {
 			t.Errorf("%q survived masking:\n%s", absent, got)
 		}
 	}
-	for _, present := range []string{"import A", "## Same words", "{/* vale off */}", "A ", "tag", " and ", "{props.x}", " here.", "const y"} {
+	for _, present := range []string{"import A", "## Same words", "{/* vale off */}", "A ", "tag", " and ", "{props.x}", " here.", "const y", "Alt words again."} {
 		if !strings.Contains(got, present) {
 			t.Errorf("%q was masked:\n%s", present, got)
 		}

@@ -566,7 +566,15 @@ func (c *qdocConv) content(raw string) { //nolint:gocyclo // one case per comman
 	switch {
 	case name == "omit":
 		c.flush()
-		c.omitted = true
+		// An omission closed on its own line, `\omit x \endomit`, ends
+		// there, and any prose after it is a paragraph of its own.
+		if i := strings.Index(rest, `\endomit`); i >= 0 {
+			if after := strings.TrimSpace(rest[i+len(`\endomit`):]); after != "" {
+				c.para = append(c.para, after)
+			}
+		} else {
+			c.omitted = true
+		}
 	case func() bool { _, ok := qdocVerbatim[name]; return ok }():
 		c.flush()
 		c.verbatim = name

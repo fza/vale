@@ -93,6 +93,34 @@ type lintResult struct {
 	// root is the index of the input path this file was found under, which is
 	// what lets the caller report files in the order they were asked for.
 	root int
+	path string // the document linted, for an error that is about it
+}
+
+// DocumentErrors are the documents a run couldn't lint, each with its own
+// error. Every other document was linted.
+type DocumentErrors []error
+
+func (e DocumentErrors) Error() string {
+	msgs := make([]string, len(e))
+	for i, err := range e {
+		msgs[i] = err.Error()
+	}
+	return strings.Join(msgs, "\n")
+}
+
+// documentError reports whether err is about the document at path, one it
+// couldn't read or parse, rather than about the configuration or a rule.
+func documentError(err error, path string) bool {
+	var ve *core.Error
+	if path == "" || !errors.As(err, &ve) {
+		return false
+	}
+	for _, p := range []string{ve.Path, ve.Context} {
+		if p != "" && filepath.Clean(p) == filepath.Clean(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewLinter initializes a Linter.
@@ -123,6 +151,7 @@ func (l *Linter) Transform(f *core.File) (string, error) {
 		Normed:   f.NormedExt,
 		Real:     f.RealExt,
 		RealPath: f.Path,
+		Held:     f.Held,
 	}
 
 	return applyPatterns(l.Manager.Config, exts, f.Content)
@@ -160,7 +189,7 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 
 	gp, err := glob.NewGlob(pat)
 	if err != nil {
-		return linted, err
+		return linted, core.NewE100("--glob", err)
 	}
 
 	l.glob = &gp
@@ -183,11 +212,18 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	// another and left the pool idle.
 	filesChan, errChan := l.lintFiles(done, input)
 
+	// A document that can't be read or parsed is reported, and the rest are
+	// still linted; anything else stops the run.
+	var docErrs DocumentErrors
 	found := make([][]*core.File, len(input))
 	for result := range filesChan {
-		if result.err != nil {
+		switch {
+		case result.err != nil && documentError(result.err, result.path):
+			docErrs = append(docErrs, result.err)
+			continue
+		case result.err != nil:
 			return inOrder(found), result.err
-		} else if l.Manager.Config.Flags.Normalize {
+		case l.Manager.Config.Flags.Normalize:
 			result.file.Path = filepath.ToSlash(result.file.Path)
 		}
 		found[result.root] = append(found[result.root], result.file)
@@ -197,6 +233,13 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 		return inOrder(found), err
 	}
 
+	if len(docErrs) > 0 {
+		// Files are linted concurrently, so their errors arrive in any order.
+		sort.SliceStable(docErrs, func(i, j int) bool {
+			return errorPath(docErrs[i]) < errorPath(docErrs[j])
+		})
+		return inOrder(found), docErrs
+	}
 	return inOrder(found), nil
 }
 
@@ -209,6 +252,18 @@ func inOrder(found [][]*core.File) []*core.File {
 		linted = append(linted, files...)
 	}
 	return linted
+}
+
+// errorPath is the document an error from documentError is about.
+func errorPath(err error) string {
+	var ve *core.Error
+	if errors.As(err, &ve) {
+		if ve.Path != "" {
+			return ve.Path
+		}
+		return ve.Context
+	}
+	return ""
 }
 
 // lintFiles walks each of the `roots` directories, creating a new goroutine to
@@ -288,25 +343,26 @@ func (l *Linter) lintFile(src string) lintResult {
 	var key cache.Key
 	cacheable := l.cacheable(src)
 	if cacheable {
+		// A file that can't be read is left to NewFile, whose error names the
+		// document, so the run reports it beside the others and goes on.
 		content, readErr := os.ReadFile(src)
-		if readErr != nil {
-			return lintResult{err: readErr}
-		}
-
-		key = l.cacheKey(src, content)
-		if file, found := l.cachedResult(src, key); found {
-			return lintResult{file: file}
+		cacheable = readErr == nil
+		if cacheable {
+			key = l.cacheKey(src, content)
+			if file, found := l.cachedResult(src, key); found {
+				return lintResult{file: file}
+			}
 		}
 	}
 
 	file, err := core.NewFile(src, l.Manager.Config)
-	if err != nil {
-		return lintResult{err: err}
-	} else if len(file.Checks) == 0 && len(file.BaseStyles) == 0 {
-		if len(l.Manager.Config.GBaseStyles) == 0 && len(l.Manager.Config.GChecks) == 0 {
-			// There's nothing to do; bail early.
-			return lintResult{file: file}
-		}
+	switch {
+	case err != nil:
+		return lintResult{err: err, path: src}
+	case l.runsNothing(file):
+		// No rule can run here -- `BasedOnStyles =` in a section that
+		// matched, say -- so the file isn't parsed at all.
+		return lintResult{file: file}
 	}
 
 	// Determine what NLP tasks this particular file needs; the goal is to do
@@ -359,6 +415,10 @@ func (l *Linter) lintFile(src string) lintResult {
 		// A Vale rule: its message and description are prose, and its
 		// tokens and swaps are not.
 		err = l.lintRule(file)
+	} else if file.Format == "data" && !simple && l.hasCodeView(file) {
+		// A data file a tree-sitter View names is read as code, so the
+		// View's queries reach its comments. See #1188.
+		err = l.lintCode(file)
 	} else if file.Format == "data" && !simple && hasViews {
 		err = l.lintData(file)
 	} else if file.Format == "code" && !simple {
@@ -399,7 +459,27 @@ func (l *Linter) lintFile(src string) lintResult {
 		l.storeResult(key, file)
 	}
 
-	return lintResult{file: file, err: err}
+	return lintResult{file: file, err: err, path: src}
+}
+
+// runsNothing reports whether no rule can run for f: it bases on no style,
+// and no rule is switched on by name, in a section or globally. It errs
+// toward false; shouldRun has the final say on each rule.
+func (l *Linter) runsNothing(f *core.File) bool {
+	if len(f.BaseStyles) > 0 {
+		return false
+	}
+	for _, on := range f.Checks {
+		if on {
+			return false
+		}
+	}
+	for k, on := range l.Manager.Config.GChecks {
+		if v, set := f.Checks[k]; on && !f.Unset[k] && (!set || v) {
+			return false
+		}
+	}
+	return true
 }
 
 // lintProse segments blk and runs every applicable rule over the results.
@@ -409,7 +489,7 @@ func (l *Linter) lintFile(src string) lintResult {
 func (l *Linter) lintProse(f *core.File, blk nlp.Block, lines int, split bool) error {
 	blks, err := f.NLP.Compute(&blk, split)
 	if err != nil {
-		return core.NewE100("NLP.Compute", err)
+		return core.NewE100(f.Path, err)
 	}
 
 	// FIXME: This is required for paragraphs that lack a newline delimiter:
@@ -439,8 +519,55 @@ func (l *Linter) lintProse(f *core.File, blk nlp.Block, lines int, split bool) e
 }
 
 func (l *Linter) lintTxt(f *core.File) error {
+	// A manuscript with chapters is a document: its chapter lines are
+	// headings, and each one opens a section. See txtdoc.go.
+	if doc, ok := textToHTML(f.Content); ok {
+		return l.lintHTMLTokens(f, []byte(doc), 0)
+	}
+
 	block := nlp.NewBlock("", f.Content, "text"+f.MetaScope+f.RealExt)
-	return l.lintProse(f, block, len(f.Lines), true)
+
+	// Plain text never becomes HTML, so its quotations are paired here and
+	// carried as inline runs, the way the walker carries a `q`.
+	if l.Manager.HasScope("quote") {
+		for _, span := range nlp.QuoteSpans(f.Content) {
+			block.Inline = append(block.Inline, nlp.Inline{Scope: "quote", Begin: span[0], End: span[1]})
+		}
+	}
+
+	if err := l.lintProse(f, block, len(f.Lines), true); err != nil {
+		return err
+	}
+
+	for _, in := range block.Inline {
+		text := f.Content[in.Begin:in.End]
+		line := 1 + strings.Count(f.Content[:in.Begin], "\n")
+		b := nlp.NewLinedBlock(f.Content, text, "quote"+f.MetaScope+f.RealExt, line)
+		b.Offset = in.Begin
+		if err := l.lintBlock(f, b, len(f.Lines), 0, false); err != nil {
+			return err
+		}
+	}
+
+	// No walker writes a plain-text file's summary, so the file is its own:
+	// one run covering it, and a paragraph per run of lines between blank
+	// lines. Without this a `metric` rule never fired on `.txt`, and
+	// `ls-metrics` printed nothing for it.
+	f.Summary.WriteString(f.Content)
+	f.SummaryRuns = []nlp.Run{{At: 0, Src: 0, N: len(f.Content)}}
+	f.Metrics["paragraphs"] = countParagraphs(f.Content)
+	return l.lintSizedScopes(f)
+}
+
+// countParagraphs counts the runs of non-blank lines in plain text.
+func countParagraphs(text string) int {
+	n := 0
+	for _, p := range strings.Split(text, "\n\n") {
+		if strings.TrimSpace(p) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (l *Linter) lintLines(f *core.File) error {

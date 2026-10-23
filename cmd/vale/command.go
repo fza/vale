@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -103,9 +104,12 @@ var commands = map[string]command{
 		Run:     runTests,
 		Summary: "Run the test cases kept beside a configuration's rules.",
 		Usage:   "test [path...]",
-		// Not announced yet: the case schema is still settling, and a format
-		// people write files against is hard to take back. See #1122.
-		Hidden: true,
+		Detail: "Cases live in a rule's `tests` list or in a `.test.yml` file. A\n" +
+			"package's own `Packages` are installed for the run, so a rule that\n" +
+			"extends another package resolves without `vale sync`.\n\n" +
+			"With --coverage, every rule found under the given paths has to\n" +
+			"produce an alert in at least one case. A rule that matches nothing\n" +
+			"passes its cases silently, and this is what tells you.",
 	},
 
 	// Private: the API surface the editor integrations and the native host
@@ -258,6 +262,13 @@ func printMetrics(args []string, _ *core.CLIFlags) error {
 	}
 
 	computed, _ := linted[0].ComputeMetrics()
+	for k, v := range computed {
+		// A score carries the digits of its division; two places is what a
+		// rule's message shows.
+		if f, ok := v.(float64); ok && f != math.Trunc(f) {
+			computed[k] = math.Round(f*100) / 100
+		}
+	}
 	return printJSON(computed)
 }
 

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jdkato/prose/v3/summarize"
+
 	"github.com/vale-cli/vale/v3/internal/glob"
 )
 
@@ -252,5 +254,19 @@ func TestNewFileEmptyStylesResetAndUnset(t *testing.T) {
 	}
 	if len(api.BaseStyles) != 1 || api.BaseStyles[0] != "Google" {
 		t.Errorf("api: BaseStyles = %v, want [Google]", api.BaseStyles)
+	}
+}
+
+func TestSentenceLengthSD(t *testing.T) {
+	doc := summarize.NewDocument("One two three. One two three. One two three.")
+	if got := sentenceLengthSD(doc); got != 0 {
+		t.Errorf("equal sentences: got %v, want 0", got)
+	}
+	doc = summarize.NewDocument("Short. This one is a good deal longer than that.")
+	if got := sentenceLengthSD(doc); got <= 0 {
+		t.Errorf("unequal sentences: got %v, want > 0", got)
+	}
+	if got := sentenceLengthSD(summarize.NewDocument("")); got != 0 {
+		t.Errorf("empty: got %v, want 0", got)
 	}
 }

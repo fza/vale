@@ -28,5 +28,7 @@ func Python() *Language {
 		Padding: func(s string) int {
 			return computePadding(s, []string{"#", `"""`, "'''"})
 		},
+		Directive: pyDirective,
+		Doc:       PyDoc,
 	}
 }

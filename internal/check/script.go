@@ -131,19 +131,25 @@ func (s Script) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.Alert
 	}
 
 	for _, match := range parseMatches(compiled.Get("matches").Array()) {
-		matchText := blk.Text[match["begin"].(int):match["end"].(int)]
-		matchLoc := []int{match["begin"].(int), match["end"].(int)}
+		begin, end := match["begin"].(int), match["end"].(int)
+		matchText := blk.Text[begin:end]
 		// NOTE: We can't call `makeAlert` here because `script`-based rules
 		// don't use our custom regexp2 library, which means the offsets
 		// (`re2loc`) will be off.
 		a := core.Alert{
-			Check:          s.Name,
-			Severity:       s.Level,
-			Span:           matchLoc,
-			Link:           s.Link,
-			Match:          matchText,
-			Action:         s.Action,
-			HasByteOffsets: true}
+			Check:    s.Name,
+			Severity: s.Level,
+			Span:     []int{begin, end},
+			Link:     s.Link,
+			Match:    matchText,
+			Action:   s.Action}
+		// The script indexed the block; an alert's byte offsets index the
+		// document. A block that is its own document, the raw scope or a
+		// plain-text file, needs no translation, and one the runs never
+		// mapped is left to the text search, which has the match to find.
+		if src, last, ok := sourceSpan(blk, begin, end); ok {
+			a.Span, a.HasByteOffsets = []int{src, last}, true
+		}
 
 		if matchMsg, ok := match["message"].(string); ok {
 			a.Message, a.Description = formatMessages(matchMsg, s.Description, matchText)
@@ -186,4 +192,27 @@ func (s Script) Fields() Definition {
 // Pattern is the internal regex pattern used by this rule.
 func (s Script) Pattern() string {
 	return s.Script
+}
+
+// sourceSpan carries a span of the block's text to the document, reporting
+// whether the block knows where that text came from.
+func sourceSpan(blk nlp.Block, begin, end int) (int, int, bool) {
+	if begin < 0 || end < begin || end > len(blk.Text) {
+		return 0, 0, false
+	}
+	if blk.Text == blk.Context {
+		return begin, end, true
+	}
+	src := blk.SourceOffset(begin)
+	if src < 0 {
+		return 0, 0, false
+	}
+	if end == begin {
+		return src, src, true
+	}
+	last := blk.SourceOffset(end - 1)
+	if last < src {
+		return 0, 0, false
+	}
+	return src, last + 1, true
 }

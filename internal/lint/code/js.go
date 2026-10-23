@@ -16,7 +16,9 @@ func JavaScript() *Language {
 		// dedent read `*` as indentation, which eats a Markdown list, and the
 		// alert adjustment has no way to know a non-whitespace character was
 		// removed. Prefix above handles the decoration instead.
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding: cStyle,
+		Queries:   []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Padding:   cStyle,
+		Directive: jsDirective,
+		Doc:       JSDoc,
 	}
 }

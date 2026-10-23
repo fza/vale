@@ -3,12 +3,34 @@ name: views
 dir: fixtures/views
 
 cases:
+  - name: tsx
+    about: "#1216 -- a `.tsx` file is read with the TSX grammar, so a View can
+      query JSX; it was parsed as TypeScript, which has no `jsx_text` node"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.tsx]
+        BasedOnStyles = Vale
+        View = Screens
+      styles/config/views/Screens.yml: |
+        engine: tree-sitter
+        scopes:
+          - name: screen
+            expr: (jsx_text) @prose
+      page.tsx: |
+        export const Page = () => <h1>Texts started agian</h1>;
+    args: page.tsx
+    exit: 1
+    want: |
+      page.tsx:1:45:Vale.Spelling:Did you really mean 'agian'?
+
   - name: yaml
     args: .
     exit: 1
     want: |
       API.yml:3:10:Scopes.Titles:'sample API' should be capitalized
-      API.yml:4:25:Vale.Spelling:Did you really mean 'multiline'?
       API.yml:9:70:Vale.Spelling:Did you really mean 'serrver'?
       API.yml:13:24:Vale.Spelling:Did you really mean 'serrver'?
       API.yml:15:70:Vale.Spelling:Did you really mean 'serrver'?
@@ -21,25 +43,17 @@ cases:
       Petstore.yaml:407:17:Vale.Spelling:Did you really mean 'nonintegers'?
       Rule.yml:3:39:Vale.Repetition:'can' is repeated!
       ansible.yml:3:13:Scopes.Titles:'reusing Code with Ansible Roles and Coent Collections' should be capitalized
-      ansible.yml:3:31:Vale.Spelling:Did you really mean 'Ansible'?
       ansible.yml:3:49:Vale.Spelling:Did you really mean 'Coent'?
-      ansible.yml:5:11:Vale.Spelling:Did you really mean 'Ansible'?
-      ansible.yml:5:29:Vale.Spelling:Did you really mean 'Ansible'?
       ansible.yml:5:60:Vale.Spelling:Did you really mean 'devlop'?
-      ansible.yml:5:103:Vale.Spelling:Did you really mean 'Ansible'?
       ansible.yml:13:28:Vale.Spelling:Did you really mean 'purose'?
-      ansible.yml:13:41:Vale.Spelling:Did you really mean 'Ansible'?
-      github-workflow.json:18:53:Vale.Spelling:Did you really mean 'pull_request'?
+      github-workflow.json:18:53:Vale.Spelling:'pull_request' looks like code; format it as code.
       github-workflow.json:228:256:Vale.Spelling:Did you really mean 'env'?
-      github-workflow.json:258:83:Vale.Spelling:Did you really mean 'repo'?
-      github-workflow.json:356:53:Vale.Spelling:Did you really mean 'pull_request'?
+      github-workflow.json:356:53:Vale.Spelling:'pull_request' looks like code; format it as code.
       github-workflow.json:497:213:Vale.Spelling:Did you really mean 'INPUT_'?
       github-workflow.json:543:293:Vale.Spelling:Did you really mean 'prereleased'?
-      github-workflow.json:617:89:Vale.Spelling:Did you really mean 'job_id'?
-      github-workflow.json:717:89:Vale.Spelling:Did you really mean 'job_id'?
+      github-workflow.json:617:89:Vale.Spelling:'job_id' looks like code; format it as code.
+      github-workflow.json:717:89:Vale.Spelling:'job_id' looks like code; format it as code.
       github-workflow.json:902:164:Vale.Spelling:Did you really mean 'redis'?
-      github-workflow.json:902:618:Vale.Spelling:Did you really mean 'hostname'?
-      github-workflow.json:902:632:Vale.Spelling:Did you really mean 'hostname'?
       issue1018.yml:3:26:Vale.Spelling:Did you really mean 'misspeling'?
       issue1018.yml:7:9:Vale.Spelling:Did you really mean 'misspeled'?
       test.java:13:38:vale.Annotations:'XXX' left in text
@@ -49,6 +63,51 @@ cases:
       test.py:14:14:vale.Annotations:'NOTE' left in text
       transcript.txt:3:6:Scopes.Assistant:'worth noting' hedges, and this is the model's turn.
       transcript.txt:3:42:Vale.Spelling:Did you really mean 'occurence'?
+
+  - name: yaml-comments
+    about: "#1188 -- a tree-sitter View on a YAML file reads its comments and
+      nothing else. A YAML file is data, and was handed to the dasel engine
+      whatever the View's engine said, which failed on the query."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.{yml,yaml}]
+        BasedOnStyles = T
+        View = Comments
+      styles/config/views/Comments.yml: |
+        engine: tree-sitter
+        scopes:
+          - expr: (comment)+ @comment
+      styles/T/Todo.yml: |
+        extends: existence
+        message: "found %s"
+        level: warning
+        tokens:
+          - TODO
+      values.yaml: |
+        # Default values for demo.
+        # TODO: top-of-file comment
+
+        replicaCount: 1 # TODO: trailing comment
+
+        image:
+          # -- TODO: a helm-docs style description
+          repository: nginx
+          tag: "TODO-not-a-comment"
+      Chart.yml: |
+        apiVersion: v2
+        # TODO: chart-level comment
+        name: demo
+        description: A TODO in a value, not a comment
+    args: --output=line Chart.yml values.yaml
+    exit: 0
+    want: |
+      Chart.yml:2:3:T.Todo:found TODO
+      values.yaml:2:3:T.Todo:found TODO
+      values.yaml:4:19:T.Todo:found TODO
+      values.yaml:7:8:T.Todo:found TODO
 
   - name: text
     about: "a `textfsm` view reads plain text through a template and names
@@ -388,3 +447,77 @@ cases:
     exit: 2
     contains: |
       no View defines a scope named 'trailer'
+
+  - name: typed-code
+    about: |
+      A tree-sitter scope's `type` names the markup its comments are written
+      in: a fenced block in a Rust doc comment is code, and a bracketed
+      symbol is a link.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.rs]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+        View = Rust
+      styles/config/views/Rust.yml: |
+        engine: tree-sitter
+        scopes:
+          - expr: (line_comment)+ @comment
+            type: md
+      lib.rs: |
+        /// Reads the recrd and returns it.
+        ///
+        /// ```
+        /// let vaule = read(ctx);
+        /// ```
+        ///
+        /// See [`Reader`] and [Writr] for the detials.
+        pub fn read() {}
+    args: lib.rs
+    exit: 1
+    want: |
+      lib.rs:1:15:Vale.Spelling:Did you really mean 'recrd'?
+      lib.rs:7:40:Vale.Spelling:Did you really mean 'detials'?
+
+  - name: data-comments
+    about: |
+      A data file's comments are prose whatever its View selects, and a `#`
+      inside a string is not a comment.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.{yml,toml}]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+        View = Data
+      styles/config/views/Data.yml: |
+        engine: dasel
+        scopes:
+          - name: title
+            expr: title
+      site.yml: |
+        # The defalt settings.
+        title: A guide to the storag layer
+        slug: "not # a commnt"  # A trailng one.
+      site.toml: |
+        # The defalt settings.
+        title = "A guide to the storag layer"
+        slug = "not # a commnt" # A trailng one.
+    args: site.yml site.toml
+    exit: 1
+    want: |
+      site.toml:1:7:Vale.Spelling:Did you really mean 'defalt'?
+      site.toml:2:25:Vale.Spelling:Did you really mean 'storag'?
+      site.toml:3:29:Vale.Spelling:Did you really mean 'trailng'?
+      site.yml:1:7:Vale.Spelling:Did you really mean 'defalt'?
+      site.yml:2:23:Vale.Spelling:Did you really mean 'storag'?
+      site.yml:3:29:Vale.Spelling:Did you really mean 'trailng'?

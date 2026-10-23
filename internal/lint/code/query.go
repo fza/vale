@@ -41,7 +41,7 @@ func NewQueryEngine(tree *sitter.Tree, lang *Language) *QueryEngine {
 	}
 }
 
-func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Comment {
+func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) []Comment {
 	var comments []Comment
 
 	if meta != "" {
@@ -105,16 +105,25 @@ func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Commen
 				rText = trimmed
 			}
 
-			cText := rText
+			// opener is what comes off the front: the first line's Text
+			// begins that far into its Source. A literal loses its opening
+			// quote, a comment whatever stripDelims takes, and bare prose
+			// nothing.
+			cText, opener := rText, 0
 			switch {
 			case literal:
 				cText = trimQuotes(rText)
+				opener = (len(rText) - len(cText)) / 2
 			case prose:
 			default:
 				cText = qe.stripDelims(rText)
+				opener = qe.openerLen(rText)
 			}
 
-			var strip []int
+			// One entry per line of Text: how far into the matching Source
+			// line that line begins. An alert's column is meaningful in Text;
+			// putting it back in Source means adding this, and nothing else.
+			strip := []int{opener}
 
 			// A literal is code that happens to hold words, so it forms its
 			// own family. Under `text` every rule already written would match
@@ -164,6 +173,9 @@ func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Commen
 					// the source line is what makes a non-whitespace cutset
 					// report the wrong column.
 					strip[i] = len(line) - len(out)
+					if i == 0 {
+						strip[i] += opener
+					}
 
 					buf.WriteString(out)
 					buf.WriteString("\n")
@@ -172,18 +184,9 @@ func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Commen
 				cText = buf.String()
 			}
 
-			// What the opening quote costs a column is recorded as a strip
-			// rather than as an offset, because only the first line pays it.
-			// A raw string's later lines begin at the margin, and carrying the
-			// quote's column into them would push every alert on them right by
-			// however far in the string began.
-			if literal {
-				if strip == nil {
-					strip = []int{offset + 1}
-				} else {
-					strip[0] += offset + 1
-				}
-				offset = 0
+			doc := ""
+			if qe.lang.DocName != nil {
+				doc = qe.lang.DocName(c.Node, source)
 			}
 
 			comments = append(comments, Comment{
@@ -193,6 +196,8 @@ func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Commen
 				Text:   cText,
 				Source: rText,
 				Strip:  strip,
+				Format: format,
+				Doc:    doc,
 			})
 		}
 	}
@@ -208,6 +213,18 @@ func (qe *QueryEngine) run(meta string, q *sitter.Query, source []byte) []Commen
 // Markdown heading, the `//` of a URL -- is content, and stripping it shifted
 // every alert to its right by its width. Per-line decoration inside a block
 // is blankPrefixes's job.
+// openerLen is how many bytes stripDelims takes off the front of s.
+func (qe *QueryEngine) openerLen(s string) int {
+	n := 0
+	for {
+		loc := qe.delims.FindStringIndex(s[n:])
+		if loc == nil || loc[0] != 0 || loc[1] == 0 {
+			return n
+		}
+		n += loc[1]
+	}
+}
+
 func (qe *QueryEngine) stripDelims(s string) string {
 	// The opener, repeated so a doubled marker comes off whole.
 	for {

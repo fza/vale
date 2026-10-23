@@ -173,7 +173,7 @@ func NewSequence(cfg *core.Config, generic baseCheck, path string) (Sequence, er
 		if token.Tag != "" {
 			tre, terr := rx.Compile(token.Tag)
 			if terr != nil {
-				return rule, core.NewE201FromPosition(terr.Error(), path, 1)
+				return rule, patternError(terr, path, token.Tag)
 			}
 			rule.Tokens[i].tagRe = tre
 		}
@@ -189,7 +189,7 @@ func NewSequence(cfg *core.Config, generic baseCheck, path string) (Sequence, er
 
 			re, errc := rx.Compile(regex)
 			if errc != nil {
-				return rule, core.NewE201FromPosition(errc.Error(), path, 1)
+				return rule, patternError(errc, path, token.Pattern)
 			}
 			rule.Tokens[i].re = re
 
@@ -200,7 +200,7 @@ func NewSequence(cfg *core.Config, generic baseCheck, path string) (Sequence, er
 
 			tre, terr := rx.Compile(anchored)
 			if terr != nil {
-				return rule, core.NewE201FromPosition(terr.Error(), path, 1)
+				return rule, patternError(terr, path, token.Pattern)
 			}
 			rule.Tokens[i].tokenRe = tre
 		}
@@ -224,7 +224,7 @@ func NewSequence(cfg *core.Config, generic baseCheck, path string) (Sequence, er
 	for _, pattern := range rule.Exceptions {
 		re, cerr := rx.Compile(pattern)
 		if cerr != nil {
-			return rule, core.NewE201FromPosition(cerr.Error(), path, 1)
+			return rule, patternError(cerr, path, pattern)
 		}
 		rule.exceptRe = append(rule.exceptRe, re)
 	}
@@ -686,12 +686,19 @@ func (s Sequence) Run(blk nlp.Block, f *core.File, cfg *core.Config) ([]core.Ale
 					}
 
 					// When the block knows where it sits in the document, hand
-					// back an absolute offset. Otherwise the span is
-					// block-relative and has to be located by searching, which
-					// resolves every repeat of a sentence to the first one.
+					// back an absolute offset. A block that inline markup
+					// rewrote -- `is *generated*` read as `is generated` -- has
+					// no offset, but each of its runs was placed as it was
+					// read, so the match's first and last bytes say where it
+					// is; a search for the rewritten text would miss and fall
+					// back to the whole line (#1202). Only a block with neither
+					// is left to be located by searching, which resolves every
+					// repeat of a sentence to the first one.
 					absolute := blk.Offset >= 0
 					if absolute {
 						span = []int{blk.Offset + span[0], blk.Offset + span[1]}
+					} else if from, to := blk.SourceOffset(span[0]), blk.SourceOffset(span[1]-1); from >= 0 && to >= from {
+						span, absolute = []int{from, to + 1}, true
 					}
 
 					action := s.Action

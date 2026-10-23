@@ -15,5 +15,7 @@ func Rust() *Language {
 		Padding: func(s string) int {
 			return computePadding(s, []string{"//", "//!", "///"})
 		},
+		Doc:           RustDoc,
+		OpensWithName: true,
 	}
 }

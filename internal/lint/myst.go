@@ -1,7 +1,9 @@
 package lint
 
 import (
+	"bytes"
 	"regexp"
+	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -27,7 +29,8 @@ import (
 // walker skips. Everything else -- targets, comments, block breaks, options,
 // role and attribute braces -- renders as nothing at all.
 
-// mystLiteral names the directives whose content is not prose.
+// mystLiteral names the directives whose content is not prose. A project's
+// `[sphinx]` section adds to it, through the parser context; see mystSphinx.
 var mystLiteral = map[string]struct{}{
 	"code":           {},
 	"code-block":     {},
@@ -60,6 +63,52 @@ var (
 	// The {.class} of a [text]{.class} inline attribute.
 	mystAttrsInline = regexp.MustCompile(`^\{[^{}\n]*\}`)
 )
+
+// mystProseRoles names the roles whose content is prose rather than an
+// identifier, and mystTargeted the ones among them whose bare content is a
+// target -- code, unless a title is written before it in angle brackets. The
+// same two lists the reStructuredText server carries; see rstServer.
+var (
+	mystProseRoles = map[string]struct{}{
+		"ref": {}, "doc": {}, "any": {}, "numref": {}, "term": {},
+		"guilabel": {}, "menuselection": {}, "abbr": {}, "dfn": {},
+	}
+	mystTargeted = map[string]struct{}{"ref": {}, "doc": {}, "any": {}, "numref": {}}
+	// text <target>
+	mystTitle = regexp.MustCompile(`^(.*\S)\s*<[^<>]+>$`)
+)
+
+// mystSphinx is a project's `[sphinx]` section as the parsers read it.
+type mystSphinx struct {
+	code  map[string]struct{}
+	prose map[string]struct{}
+}
+
+var mystSphinxKey = parser.NewContextKey()
+
+// mystContext carries the `[sphinx]` section into a parse.
+func (l *Linter) mystContext() parser.Context {
+	set := func(names []string) map[string]struct{} {
+		out := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			out[n] = struct{}{}
+		}
+		return out
+	}
+	ctx := parser.NewContext()
+	ctx.Set(mystSphinxKey, mystSphinx{
+		code:  set(l.Manager.Config.SphinxNames("CodeDirectives")),
+		prose: set(l.Manager.Config.SphinxNames("ProseRoles")),
+	})
+	return ctx
+}
+
+func sphinxOf(pc parser.Context) mystSphinx {
+	if v, ok := pc.Get(mystSphinxKey).(mystSphinx); ok {
+		return v
+	}
+	return mystSphinx{}
+}
 
 // MyST configuration: Markdown, plus the MyST constructs.
 var goldMyst = goldmark.New(
@@ -164,7 +213,11 @@ func (*mystDirectiveParser) Open(_ ast.Node, reader text.Reader, pc parser.Conte
 		size:   size,
 		opts:   1,
 	}
-	_, node.literal = mystLiteral[node.name]
+	if _, ok := mystLiteral[node.name]; ok {
+		node.literal = true
+	} else if _, ok = sphinxOf(pc).code[strings.ToLower(node.name)]; ok {
+		node.literal = true
+	}
 
 	reader.Advance(segment.Len() - 1)
 	if node.literal {
@@ -297,6 +350,39 @@ func (*mystMarkupParser) Close(ast.Node, text.Reader, parser.Context) {}
 func (*mystMarkupParser) CanInterruptParagraph() bool { return true }
 func (*mystMarkupParser) CanAcceptIndentedLine() bool { return false }
 
+// mystRoleText reads a prose role's content from line, where the braces run
+// to at and a code span follows. It returns the text to lint and how far the
+// whole role reaches, or 0 when the role's content is not prose.
+func mystRoleText(line []byte, at int, pc parser.Context) ([]byte, int) {
+	name := strings.ToLower(string(line[1 : at-1]))
+	if i := strings.LastIndexByte(name, ':'); i >= 0 {
+		name = name[i+1:]
+	}
+	_, prose := mystProseRoles[name]
+	if _, cfg := sphinxOf(pc).prose[name]; !prose && !cfg {
+		return nil, 0
+	}
+
+	// The span's opening run of backticks, then the matching closing run.
+	rest := line[at:]
+	ticks := 0
+	for ticks < len(rest) && rest[ticks] == '`' {
+		ticks++
+	}
+	end := bytes.Index(rest[ticks:], rest[:ticks])
+	if ticks == 0 || end < 0 {
+		return nil, 0
+	}
+	content := bytes.TrimSpace(rest[ticks : ticks+end])
+
+	if m := mystTitle.FindSubmatch(content); m != nil {
+		content = m[1]
+	} else if _, targeted := mystTargeted[name]; targeted {
+		return nil, 0
+	}
+	return content, at + ticks + end + ticks
+}
+
 // A mystInline is inline MyST syntax with nothing to lint: a role's braces, a
 // substitution, or an inline attribute.
 type mystInline struct {
@@ -316,7 +402,7 @@ func (*mystInlineParser) Trigger() []byte {
 	return []byte{'{'}
 }
 
-func (*mystInlineParser) Parse(_ ast.Node, block text.Reader, _ parser.Context) ast.Node {
+func (*mystInlineParser) Parse(_ ast.Node, block text.Reader, pc parser.Context) ast.Node {
 	line, _ := block.PeekLine()
 
 	// {{ substitution }}
@@ -324,9 +410,15 @@ func (*mystInlineParser) Parse(_ ast.Node, block text.Reader, _ parser.Context) 
 		block.Advance(len(m))
 		return &mystInline{}
 	}
-	// {role}`content` -- only the braces; the code span that follows is
-	// already skipped as inline code.
+	// {role}`content` -- the braces alone, so that the code span that follows
+	// is skipped as inline code: a role's content is an identifier. Except
+	// for the roles whose content is prose, which is read as text -- its
+	// title, when one is written before a target in angle brackets.
 	if m := mystRole.Find(line); m != nil {
+		if text, n := mystRoleText(line, len(m)-1, pc); n > 0 {
+			block.Advance(n)
+			return ast.NewString(text)
+		}
 		block.Advance(len(m) - 1)
 		return &mystInline{}
 	}

@@ -16,6 +16,8 @@ type Existence struct {
 	Definition `mapstructure:",squash"`
 	Raw        []string
 	Tokens     []string
+	// `affix` names the affix file whose flags a `word/FLAGS` token uses.
+	Affix string
 	// `exceptions` (`array`): An array of strings to be ignored.
 	Exceptions []string
 	exceptRe   *rx.Regexp
@@ -42,6 +44,11 @@ func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, 
 		return rule, err
 	}
 
+	rule.Tokens, err = affixTokens(cfg, rule.Affix, rule.Tokens, path)
+	if err != nil {
+		return rule, err
+	}
+
 	// `Vocab` is a list of accepted *words*, so it only makes sense to treat
 	// it as a set of exceptions for word-based rules. For `nonword` rules --
 	// whose tokens match arbitrary spans (e.g. `"[^"]+"[.,]`) -- a vocab word
@@ -50,7 +57,7 @@ func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, 
 	// See https://github.com/errata-ai/vale/issues/1058.
 	re, err := updateExceptions(rule.Exceptions, cfg.AcceptedTokens, rule.Vocab && !rule.Nonword)
 	if err != nil {
-		return rule, core.NewE201FromPosition(err.Error(), path, 1)
+		return rule, patternError(err, path, rule.Exceptions...)
 	}
 	rule.exceptRe = re
 	rule.phraseRe = buildPhraseRe(rule.Exceptions, cfg.AcceptedTokens, rule.Vocab && !rule.Nonword)
@@ -65,14 +72,14 @@ func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, 
 	parsed := []string{}
 	for _, token := range rule.Tokens {
 		if strings.TrimSpace(token) != "" {
-			parsed = append(parsed, token)
+			parsed = append(parsed, wrapSpaces(token))
 		}
 	}
 	regex = fmt.Sprintf(regex, strings.Join(parsed, "|"))
 
 	re, err = rx.Compile(regex)
 	if err != nil {
-		return rule, core.NewE201FromPosition(err.Error(), path, 1)
+		return rule, patternError(err, path, append(parsed, rule.Raw...)...)
 	}
 	rule.pattern = re
 	rule.groups = groupSpans(parsed, strings.Join(rule.Raw, ""), rule.Append)

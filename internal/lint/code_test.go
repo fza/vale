@@ -213,3 +213,31 @@ func TestMaskCode(t *testing.T) {
 		})
 	}
 }
+
+// The format a file is read as supplies the grammar for an extension that has
+// none of its own; without one, such a file is linted by the regex fallback,
+// which has no JavaScript entry and so reads no comments at all.
+func TestLanguageForMappedExtension(t *testing.T) {
+	tests := []struct {
+		name    string
+		formats map[string]string
+		ext     string
+		want    bool
+	}{
+		{"own grammar", nil, ".js", true},
+		{"unmapped, no grammar", nil, ".es", false},
+		{"mapped to a grammar", map[string]string{"es": "js"}, ".es", true},
+		{"mapped to a format without one", map[string]string{"es": "md"}, ".es", false},
+		{"mapped by a glob", map[string]string{"*.es": "js"}, ".es", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normed, _ := core.FormatFromExt("test"+tt.ext, tt.formats)
+			lang, langErr := (&Linter{}).languageFor(&core.File{RealExt: tt.ext, NormedExt: normed})
+			if got := langErr == nil && lang != nil; got != tt.want {
+				t.Errorf("languageFor(%q) with %v found a grammar = %v, want %v",
+					tt.ext, tt.formats, got, tt.want)
+			}
+		})
+	}
+}

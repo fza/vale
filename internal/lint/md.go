@@ -2,11 +2,13 @@ package lint
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	grh "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
 
@@ -60,7 +62,8 @@ func (l *Linter) lintMarkdownWith(f *core.File, md goldmark.Markdown) error {
 	// parsing, because a closing tag holds no attribute and a Markdown parser
 	// escapes it into paragraph text rather than passing it through as markup.
 	src := []byte(markTagDirectives(s))
-	doc := md.Parser().Parse(text.NewReader(src))
+	ctx := l.mystContext()
+	doc := md.Parser().Parse(text.NewReader(src), parser.WithContext(ctx))
 	if err = md.Renderer().Render(&buf, src, doc); err != nil {
 		return core.NewE100(f.Path, err)
 	}
@@ -68,8 +71,21 @@ func (l *Linter) lintMarkdownWith(f *core.File, md goldmark.Markdown) error {
 	if md == goldMdx {
 		// The transform rewrites the front matter, so the spans of the
 		// parsed text are not the file's; the file is parsed again for them.
+		fileCtx, fileSrc := ctx, src
 		if s != f.Content {
-			doc = md.Parser().Parse(text.NewReader([]byte(f.Content)))
+			fileCtx, fileSrc = l.mystContext(), []byte(f.Content)
+			doc = md.Parser().Parse(text.NewReader(fileSrc), parser.WithContext(fileCtx))
+		}
+
+		// The rest of a file after a block that never closed was read as
+		// code, so none of it would be checked; MDX itself rejects the file.
+		if open, ok := ctx.Get(mdxUnclosedKey).(mdxUnclosed); ok {
+			if placed, found := fileCtx.Get(mdxUnclosedKey).(mdxUnclosed); found {
+				open, src = placed, fileSrc
+			}
+			line := bytes.Count(src[:open.offset], []byte("\n")) + 1
+			return core.NewE201FromPosition(fmt.Sprintf(
+				"Invalid MDX: %s, so the rest of the file can't be read.", open.what), f.Path, line)
 		}
 		f.Content = maskSpans(f.Content, mdxTagMasks(doc))
 	}

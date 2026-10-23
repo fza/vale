@@ -136,6 +136,24 @@ func TestCachedRunMatchesUncachedRun(t *testing.T) {
 	}
 }
 
+// A file the cache cannot read is linted the way an uncached run lints it,
+// rather than ending the run, and nothing is stored for it.
+func TestUnreadableFileIsLintedAsUncached(t *testing.T) {
+	f := newCacheFixture(t)
+	path := f.write(t.TempDir(), "doc.md", "This is obviously wrong.\n")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the file stays readable, as it does for root")
+	}
+
+	f.lint(f.linter("v1"), path)
+	if f.entries() != 0 {
+		t.Error("an unreadable file should leave no cache entry behind")
+	}
+}
+
 // The content is part of the key, so an edit is picked up.
 func TestEditedFileIsNotServedFromCache(t *testing.T) {
 	f := newCacheFixture(t)
@@ -340,6 +358,7 @@ func TestEveryFlagIsClassified(t *testing.T) {
 		"Output":        true,
 		"Counts":        true, // JSON reporting only
 		"Apply":         true, // `vale fix` writes to disk; linting is unaffected
+		"Coverage":      true, // `vale test` only
 		"NoColor":       true,
 		"NoExit":        true,
 		"NoCache":       true,

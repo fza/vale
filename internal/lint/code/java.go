@@ -16,6 +16,8 @@ func Java() *Language {
 			{Name: "", Expr: "(line_comment)+ @comment", Type: ""},
 			{Name: "", Expr: "(block_comment)+ @comment", Type: ""},
 		},
-		Padding: cStyle,
+		Padding:   cStyle,
+		Directive: javaDirective,
+		Doc:       Javadoc,
 	}
 }

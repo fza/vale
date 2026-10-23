@@ -2,7 +2,11 @@ package check
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/andybalholm/cascadia"
+	"golang.org/x/net/html"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/nlp"
@@ -132,5 +136,126 @@ func TestScopeExcluded(t *testing.T) {
 	}
 	if got := NewScope([]string{"~heading"}).Excluded; len(got) != 0 {
 		t.Errorf("~heading excludes no inline scope, got %v", got)
+	}
+	if got := NewScope([]string{"~quote"}).Excluded; len(got) != 1 || got[0] != "quote" {
+		t.Errorf("~quote should exclude the quote scope, got %v", got)
+	}
+}
+
+// A named scope stands in for its expression wherever a term could go: alone,
+// negated, or in a chain. A chain has no opposite, so negating one is refused.
+func TestExpandScopes(t *testing.T) {
+	names := map[string]string{
+		"methods": `doc(section:has(> h2:contains("Methods")))`,
+		"lead":    "text & doc(h1 + p)",
+	}
+
+	for _, tt := range []struct {
+		name  string
+		scope interface{}
+		want  []string
+	}{
+		{"none", nil, nil},
+		{"unnamed string", "heading", []string{"heading"}},
+		{"unnamed list", []interface{}{"heading", "~list"}, []string{"heading", "~list"}},
+		{"alone", "methods", []string{`doc(section:has(> h2:contains("Methods")))`}},
+		{"negated", "~methods", []string{`~doc(section:has(> h2:contains("Methods")))`}},
+		{"in a chain", "sentence & methods", []string{`sentence & doc(section:has(> h2:contains("Methods")))`}},
+		{"chain alone", "lead", []string{"text & doc(h1 + p)"}},
+		{"chain in a chain", "list & lead", []string{"list & text & doc(h1 + p)"}},
+		{"list of names", []string{"methods", "list"}, []string{`doc(section:has(> h2:contains("Methods")))`, "list"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := expandScopes(tt.scope, names)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := expandScopes("~lead", names); err == nil {
+		t.Error("negating a chain was accepted")
+	}
+	if _, err := expandScopes(42, names); err == nil {
+		t.Error("a number was accepted as a scope")
+	}
+}
+
+// The selector syntax a rule may write is Selectors Level 4; what cascadia
+// does not parse is spelled in what it does, and what it parses is passed
+// through as written.
+func TestStandardSelector(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{`h2`, `h2`},
+		{`:is(h2, h3)`, `:not(:not(h2, h3))`},
+		{`:where(h2, h3)`, `:not(:not(h2, h3))`},
+		{`:IS(h2)`, `:not(:not(h2))`},
+		{`section:has(> :is(h1, h2):contains("m"))`, `section:has(> :not(:not(h1, h2)):contains("m"))`},
+		{`:is(h2:not(:contains("x")), h3) + p`, `:not(:not(h2:not(:contains("x")), h3)) + p`},
+		{`h2:contains(":is(")`, `h2:contains(":is(")`},
+		{`h2:contains(':is(')`, `h2:contains(':is(')`},
+		{`:is(:is(h1, h2), h3)`, `:not(:not(:not(:not(h1, h2)), h3))`},
+		{`section:has(> h2, > h3)`, `section:has(> h2, > h3)`},
+	} {
+		if got := standardSelector(tt.in); got != tt.want {
+			t.Errorf("standardSelector(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// The forms the documentation promises compile, and select what they say.
+func TestCompileSelectorLevel4(t *testing.T) {
+	doc, err := html.Parse(strings.NewReader(`<body>` +
+		`<section id="a"><h2>Methods</h2><p>x</p></section>` +
+		`<section id="b"><h3>Intro</h3><p>y</p></section>` +
+		`<section id="c"><p>z</p><h2>Late</h2></section></body>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		sel  string
+		want []string
+	}{
+		{`section:has(> h2)`, []string{"a", "c"}},
+		{`section:has(> h2, > h3)`, []string{"a", "b", "c"}},
+		{`section:has(> h2, h3)`, []string{"a", "b", "c"}},
+		{`section:has(+ section)`, []string{"a", "b"}},
+		{`section:has(~ section)`, []string{"a", "b"}},
+		{`section:has(> p + h2)`, []string{"c"}},
+		{`section:has(> h2 + p)`, []string{"a"}},
+		{`section:haschild(h2, h3)`, []string{"a", "b", "c"}},
+		{`section:not(:has(> h2, > h3))`, nil},
+		{`section:has(> :is(h2, h3):contains("i"))`, []string{"b"}},
+		{`section:is(:has(> h3), :has(> p + h2))`, []string{"b", "c"}},
+		{`section:where(:has(> h3), :has(> p + h2))`, []string{"b", "c"}},
+		{`section:has(> :is(h2, h3) + p)`, []string{"a", "b"}},
+	} {
+		m, cErr := compileSelector(tt.sel)
+		if cErr != nil {
+			t.Errorf("%s: %v", tt.sel, cErr)
+			continue
+		}
+
+		var got []string
+		for _, n := range cascadia.QueryAll(doc, m) {
+			for _, a := range n.Attr {
+				if a.Key == "id" {
+					got = append(got, a.Val)
+				}
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			t.Errorf("%s selected %v, want %v", tt.sel, got, tt.want)
+		}
+	}
+
+	for _, sel := range []string{`:is(`, `section:has(>)`, `:is(h2`} {
+		if _, cErr := compileSelector(sel); cErr == nil {
+			t.Errorf("%q was accepted", sel)
+		}
 	}
 }

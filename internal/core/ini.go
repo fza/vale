@@ -140,6 +140,8 @@ func loadVocabulary(root string, cfg *Config) (*Vocabulary, error) {
 			terms, rerr := readWordList(fp)
 			vocab.Rejected = append(vocab.Rejected, terms...)
 			return rerr
+		case vocabFiles[0], vocabFiles[1]:
+			return readVocabYAML(fp, vocab, cfg)
 		}
 		return nil
 	})
@@ -235,11 +237,44 @@ func lastValue(key *ini.Key) string {
 // follows BasedOnStyles and its own level again.
 const unsetValue = "UNSET"
 
+// noneValue is `BasedOnStyles = NONE` or `Vocab = NONE`, the spelled-out
+// form of an empty value: nothing listed, and nothing inherited.
+const noneValue = "NONE"
+
+// baseStyles reads a BasedOnStyles key.
+func baseStyles(key *ini.Key) []string {
+	return valuesAfterNone(key)
+}
+
+// valuesAfterNone reads a list key. Its values arrive merged across the
+// configuration's layers, so NONE clears whatever came before it and the
+// last layer to say NONE wins.
+func valuesAfterNone(key *ini.Key) []string {
+	values := key.StringsWithShadows(",")
+	for i := len(values) - 1; i >= 0; i-- {
+		if strings.TrimSpace(values[i]) == noneValue {
+			values = values[i+1:]
+			break
+		}
+	}
+	return mergeValues(values)
+}
+
 func validateLevel(key, val string, levels map[string]string) bool {
 	options := []string{"YES", "suggestion", "warning", "error"}
-	if val == "NO" || !StringInSlice(val, options) {
+	switch {
+	case val == "NO":
 		return false
-	} else if val != "YES" {
+	case !StringInSlice(val, options):
+		// Read as off, as before, but said: a typo here silently disabled
+		// the rule, and a misspelled key was never read at all.
+		if strings.Contains(key, ".") {
+			Warn(fmt.Sprintf("'%s = %s' isn't YES, NO, UNSET, or a level; Vale is switching the rule off.", key, val))
+		} else {
+			Warn(fmt.Sprintf("'%s' isn't a section option; Vale is ignoring it.", key))
+		}
+		return false
+	case val != "YES":
 		levels[key] = val
 	}
 	return true
@@ -247,7 +282,7 @@ func validateLevel(key, val string, levels map[string]string) bool {
 
 var syntaxOpts = map[string]func(string, *ini.Section, *Config) error{
 	"Vocab": func(lbl string, sec *ini.Section, cfg *Config) error {
-		names := mergeValues(sec.Key("Vocab").StringsWithShadows(","))
+		names := valuesAfterNone(sec.Key("Vocab"))
 		for _, name := range names {
 			if _, err := loadVocabulary(name, cfg); err != nil {
 				return err
@@ -261,7 +296,8 @@ var syntaxOpts = map[string]func(string, *ini.Section, *Config) error{
 		return nil
 	},
 	"BasedOnStyles": func(lbl string, sec *ini.Section, cfg *Config) error {
-		pat, err := glob.Compile(lbl)
+		g, _ := SplitSection(lbl)
+		pat, err := glob.Compile(g)
 		if err != nil {
 			return NewE201FromTarget(
 				fmt.Sprintf("The glob pattern '%s' could not be compiled.", lbl),
@@ -270,7 +306,7 @@ var syntaxOpts = map[string]func(string, *ini.Section, *Config) error{
 		} else if _, found := cfg.SecToPat[lbl]; !found {
 			cfg.SecToPat[lbl] = pat
 		}
-		sStyles := mergeValues(sec.Key("BasedOnStyles").StringsWithShadows(","))
+		sStyles := baseStyles(sec.Key("BasedOnStyles"))
 
 		cfg.Styles = append(cfg.Styles, sStyles...)
 		cfg.StyleKeys = append(cfg.StyleKeys, lbl)
@@ -334,7 +370,7 @@ var syntaxOpts = map[string]func(string, *ini.Section, *Config) error{
 
 var globalOpts = map[string]func(*ini.Section, *Config){
 	"BasedOnStyles": func(sec *ini.Section, cfg *Config) {
-		cfg.GBaseStyles = mergeValues(sec.Key("BasedOnStyles").StringsWithShadows(","))
+		cfg.GBaseStyles = baseStyles(sec.Key("BasedOnStyles"))
 		cfg.Styles = append(cfg.Styles, cfg.GBaseStyles...)
 	},
 	"IgnorePatterns": func(sec *ini.Section, cfg *Config) {
@@ -358,10 +394,14 @@ var coreOpts = map[string]func(*ini.Section, *Config) error{
 			cfg.AddStylesPath(path)
 
 			if !system.FileExists(path) {
-				return NewE201FromTarget(
-					fmt.Sprintf("The path '%s' does not exist.", path),
-					path,
-					cfg.Flags.Path)
+				// The value was expanded on load, so the line is found by
+				// the path it was written as.
+				written := func(v string) bool {
+					v = filepath.Clean(filepath.FromSlash(v))
+					return v != "." && strings.HasSuffix(path, v)
+				}
+				return NewE201FromKey(cfg, "StylesPath", written,
+					fmt.Sprintf("The StylesPath '%s' doesn't exist.", path))
 			}
 		}
 		return nil
@@ -403,7 +443,7 @@ var coreOpts = map[string]func(*ini.Section, *Config) error{
 		return nil
 	},
 	"Vocab": func(sec *ini.Section, cfg *Config) error {
-		cfg.Vocab = mergeValues(sec.Key("Vocab").StringsWithShadows(","))
+		cfg.Vocab = valuesAfterNone(sec.Key("Vocab"))
 		for _, v := range cfg.Vocab {
 			if err := loadVocab(v, cfg); err != nil {
 				return err
@@ -534,9 +574,48 @@ func processSources(cfg *Config, sources []string) (*ini.File, error) {
 
 	uCfg, err = shadowLoad(sources[0], s...)
 	cfg.Flags.Path = sources[len(sources)-1]
+	cfg.StyleSources = styleSources(sources)
 
 	return uCfg, err
 }
+
+// styleSources maps each section that sets BasedOnStyles to the last
+// configuration file that sets it there.
+func styleSources(sources []string) map[string]string {
+	options := ini.LoadOptions{Loose: true, AllowShadows: true, ChildSectionDelimiter: noChildSections}
+	out := map[string]string{}
+	for _, src := range sources {
+		f, err := ini.LoadSources(options, src)
+		if err != nil {
+			continue
+		}
+		for _, sec := range f.Sections() {
+			if sec.HasKey("BasedOnStyles") {
+				out[sec.Name()] = src
+			}
+		}
+	}
+	return out
+}
+
+// packageOf returns the package a configuration file came from, or "" for
+// one of the project's own: `vale sync` writes a package's `.vale.ini` to
+// `.vale-config/<n>-<Name>.ini`.
+func packageOf(path string) string {
+	if filepath.Base(filepath.Dir(path)) != PipeDir {
+		return ""
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if _, rest, found := strings.Cut(name, "-"); found {
+		return rest
+	}
+	return name
+}
+
+// sphinxKeys are the keys a `[sphinx]` section may set: the directives whose
+// body is code rather than prose, and the roles whose text is prose rather
+// than an identifier. Both the reStructuredText and the MyST reader use them.
+var sphinxKeys = []string{"CodeDirectives", "ProseRoles"}
 
 func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 	core := uCfg.Section("")
@@ -544,6 +623,7 @@ func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 
 	formats := uCfg.Section("formats")
 	adoc := uCfg.Section("asciidoctor")
+	sphinx := uCfg.Section("sphinx")
 
 	// Default settings
 	for _, k := range core.KeyStrings() {
@@ -580,9 +660,20 @@ func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 		cfg.Asciidoctor[k] = adoc.Key(k).String()
 	}
 
+	// A Sphinx project's directives and roles
+	for _, k := range sphinx.KeyStrings() {
+		if !StringInSlice(k, sphinxKeys) {
+			Warn(fmt.Sprintf("'%s' isn't a sphinx option; Vale is ignoring it.", k))
+			continue
+		}
+		cfg.Sphinx[k] = sphinx.Key(k).String()
+	}
+
 	// Global settings
 	for _, k := range global.KeyStrings() {
-		if _, option := coreOpts[k]; option {
+		if k == "Vocab" {
+			continue // read below, once every rule setting is known
+		} else if _, option := coreOpts[k]; option {
 			return nil, NewE201FromTarget(fmt.Sprintf(coreError, k), k, cfg.RootINI)
 		} else if f, found := globalOpts[k]; found {
 			f(global, cfg)
@@ -600,6 +691,23 @@ func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 		}
 	}
 
+	// `[*]` names vocabularies for every file, with rules of their own that
+	// are on unless a setting in `[*]` says otherwise.
+	if global.HasKey("Vocab") {
+		names := valuesAfterNone(global.Key("Vocab"))
+		for _, name := range names {
+			if _, err := loadVocabulary(name, cfg); err != nil && !dry {
+				return nil, err
+			}
+			for _, rule := range []string{".Terms", ".Avoid"} {
+				if _, set := cfg.GChecks["Vale."+name+rule]; !set {
+					cfg.GChecks["Vale."+name+rule] = true
+				}
+			}
+		}
+		cfg.SVocab["*"] = names
+	}
+
 	// Syntax-specific settings
 	for _, sec := range uCfg.SectionStrings() {
 		if StringInSlice(sec, reservedSections) {
@@ -615,18 +723,28 @@ func processConfig(uCfg *ini.File, cfg *Config, dry bool) (*ini.File, error) {
 
 // reservedSections are the section names that carry something other than a
 // file-matching pattern.
-var reservedSections = []string{"*", "DEFAULT", "formats", "asciidoctor"}
+var reservedSections = []string{"*", "DEFAULT", "formats", "asciidoctor", "sphinx"}
 
 // processSection reads one glob section and registers it under label.
 //
 // The label is the pattern a file is matched against, which is the section's
 // own name in a root configuration and an anchored form of it in a nested one.
 func processSection(uCfg *ini.File, sec, label string, cfg *Config, dry bool) error {
-	pat, err := glob.Compile(label)
+	// `[*.md if .Meta.draft]` applies to the files its glob matches for
+	// which its condition holds.
+	g, cond := SplitSection(label)
+	pat, err := glob.Compile(g)
 	if err != nil {
 		return err
 	}
 	cfg.SecToPat[label] = pat
+	if cond != "" {
+		c, cErr := NewCondition(cond)
+		if cErr != nil {
+			return NewE201FromTarget(fmt.Sprintf("[%s]: %s", sec, cErr), sec, cfg.RootINI)
+		}
+		cfg.SecToCond[label] = c
+	}
 
 	syntaxMap := make(map[string]bool)
 	levelMap := make(map[string]string)

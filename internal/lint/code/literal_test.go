@@ -75,16 +75,16 @@ func TestGoLiteralReportsTheSourceColumn(t *testing.T) {
 	}
 
 	// The literal opens at column 24 (zero-based), so its content starts at
-	// 25 and the whole shift is recorded as a strip.
-	if comment.Offset != 0 {
-		t.Errorf("got offset %d, want 0", comment.Offset)
-	}
+	// 25: the literal's own column, and the quote recorded as a strip.
 	strip, ok := comment.StripAt(1)
 	if !ok {
 		t.Fatal("a literal should record what its quoting cost")
 	}
-	if strip != 25 {
-		t.Errorf("got strip %d, want 25", strip)
+	if strip != 1 {
+		t.Errorf("the opening quote should be the first line's strip, got %d", strip)
+	}
+	if comment.Offset+strip != 25 {
+		t.Errorf("the first line should begin at the content's source column, got %d", comment.Offset+strip)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestGoRawLiteralKeepsLaterLinesAtTheMargin(t *testing.T) {
 		if comment.Line != 3 {
 			t.Errorf("got line %d, want 3", comment.Line)
 		}
-		if first, _ := comment.StripAt(1); first != 16 {
-			t.Errorf("got first-line strip %d, want 16", first)
+		if first, _ := comment.StripAt(1); comment.Offset+first != 16 {
+			t.Errorf("the first line should begin past the opening quote, got %d", comment.Offset+first)
 		}
 		// The block is dedented by the indentation its lines share, and
 		// that is the whole of what the third line paid.

@@ -40,6 +40,30 @@ cases:
       test.java:1:4:vale.Annotations:'XXX' left in text
       test.java:9:4:vale.Annotations:'TODO' left in text
 
+  - name: kotlin
+    args: test.kt
+    exit: 0
+    want: |
+      test.kt:1:4:vale.Annotations:'NOTE' left in text
+      test.kt:2:4:vale.Annotations:'XXX' left in text
+      test.kt:6:4:vale.Annotations:'TODO' left in text
+      test.kt:8:16:vale.Annotations:'FIXME' left in text
+      test.kt:11:8:vale.Annotations:'NOTE' left in text
+      test.kt:13:17:vale.Annotations:'FIXME' left in text
+      test.kt:17:4:vale.Annotations:'XXX' left in text
+      test.kt:21:5:vale.Annotations:'NOTE' left in text
+
+  - name: csharp
+    args: test.cs
+    exit: 0
+    want: |
+      test.cs:1:4:vale.Annotations:'NOTE' left in text
+      test.cs:2:4:vale.Annotations:'XXX' left in text
+      test.cs:5:18:vale.Annotations:'TODO' left in text
+      test.cs:8:12:vale.Annotations:'NOTE' left in text
+      test.cs:15:37:vale.Annotations:'FIXME' left in text
+      test.cs:16:33:vale.Annotations:'XXX' left in text
+
   - name: proto
     args: test.proto
     exit: 0
@@ -134,6 +158,36 @@ cases:
       test.adoc:75:16:vale.Annotations:'TODO' left in text
       test.adoc:79:6:vale.Annotations:'NOTE' left in text
       test.adoc:86:6:vale.Annotations:'NOTE' left in text
+
+  - name: asciidoc/xref-without-text
+    about: a cross-reference the author gave no text renders as an empty
+      link. Asciidoctor otherwise invents text for it, the target's title or
+      `[refid]` or the file path, which a chapter of a book linted on its own
+      gets for every reference into another chapter, and none of it is in the
+      source. Authored text is still linted.
+    requires: asciidoctor
+    files:
+      .vale.ini: |
+        MinAlertLevel = suggestion
+
+        [*.adoc]
+        BasedOnStyles = Vale
+      ch1.adoc: |
+        = Chapter 1
+
+        See <<zorbblat>>, <<quxelate.adoc#zorbblat>>, xref:quxelate.adoc#zorbblat[],
+        xref:quxelate.adoc[], and xref:setup[a custum label].
+
+        Also <<setup>>.
+
+        [[setup]]
+        == Setup
+
+        Text.
+    args: ch1.adoc
+    exit: 1
+    want: |
+      ch1.adoc:4:40:Vale.Spelling:Did you really mean 'custum'?
 
   - name: python
     args: test.py
@@ -242,13 +296,15 @@ cases:
       - FIXME
 
   - name: myst
-    about: "#667 -- MyST-only syntax is markup, not prose: targets, roles,
-      comments, options, and block breaks say nothing, directive content is
-      linted, and literal directives stay skipped"
+    about: "#667 -- MyST-only syntax is markup, not prose: targets, comments,
+      options, and block breaks say nothing, a role's content is code unless
+      the role carries prose, as `term` does, directive content is linted,
+      and literal directives stay skipped"
     args: test.myst
     exit: 0
     want: |
       test.myst:13:19:vale.Annotations:'TODO' left in text
+      test.myst:13:59:vale.Annotations:'FIXME' left in text
       test.myst:29:26:vale.Annotations:'XXX' left in text
       test.myst:33:19:vale.Annotations:'TODO' left in text
       test.myst:38:30:vale.Annotations:'XXX' left in text
@@ -259,8 +315,67 @@ cases:
       test.myst:86:23:vale.Annotations:'TODO' left in text
       test.myst:97:7:vale.Annotations:'XXX' left in text
     absent:
-      - FIXME
       - NOTE
+
+  - name: myst-sphinx
+    about: "a MyST project reads the same `[sphinx]` section as a
+      reStructuredText one: a directive's content is prose unless the
+      directive is code, built in or configured, and a role's content is code
+      unless the role carries prose, built in or configured. A titled
+      reference is linted as its title; a bare target is not."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        [formats]
+        md = myst
+
+        [sphinx]
+        CodeDirectives = plantuml
+        ProseRoles = kbd
+
+        [*.md]
+        T.Rule = YES
+      styles/T/Rule.yml: |
+        extends: existence
+        message: "found %s"
+        level: error
+        tokens:
+          - wombat
+      doc.md: |
+        # Title
+
+        A paragraph with a wombat.
+
+        ```{versionadded} 1.2
+        The wombat arrived here.
+        ```
+
+        ```{tab-item} Linux
+        A custom directive with a wombat.
+        ```
+
+        ```{plantuml}
+        wombat -> here
+        ```
+
+        ```{mermaid}
+        graph wombat
+        ```
+
+        See {ref}`the wombat guide <target>` and {doc}`wombat/path` and {term}`wombat` and {kbd}`press wombat` and {func}`wombat` and {py:class}`wombat.Client`.
+
+        Trailing wombat.
+    args: doc.md
+    exit: 1
+    want: |
+      doc.md:3:20:T.Rule:found wombat
+      doc.md:6:5:T.Rule:found wombat
+      doc.md:10:27:T.Rule:found wombat
+      doc.md:21:15:T.Rule:found wombat
+      doc.md:21:48:T.Rule:found wombat
+      doc.md:21:72:T.Rule:found wombat
+      doc.md:23:10:T.Rule:found wombat
 
   - name: typst
     about: "#651 -- Typst parses through typst2vast, the compiler's own
@@ -753,6 +868,52 @@ cases:
       widget.cpp:6:23:T.Tok:'ZQX' in a doc comment
       widget.cpp:8:26:T.Tok:'ZQX' in a doc comment
 
+  - name: qdoc-fragments-raw-scope
+    about: "a `scope: raw` rule reads the whole source of a fragment file, with
+      or without a doc comment in it; each comment is linted in the file's
+      place, and the file is put back before the raw scope runs"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [formats]
+        cpp = qdoc
+
+        [*.cpp]
+        T.Tok = YES
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        scope: raw
+        nonword: true
+        raw:
+          - ZQX
+      code_no_comment.cpp: |
+        #include "widget.h"
+
+        int ZQX_marker_one() { return 0; }
+
+        void Widget::other() {}
+      code_with_comment.cpp: |
+        #include "widget.h"
+
+        int ZQX_marker_one() { return 0; }
+
+        /*!
+            \fn void Widget::clicked()
+
+            Ordinary prose with no marker here.
+        */
+
+        void Widget::other() {}
+    args: .
+    exit: 1
+    want: |
+      code_no_comment.cpp:3:5:T.Tok:'ZQX' found
+      code_with_comment.cpp:3:5:T.Tok:'ZQX' found
+
   - name: qdocinc-include
     about: "a `.qdocinc` is an include, not a file of comments: its markup is
       the body of one, so nothing waits for a `/*!` that the file never
@@ -1182,6 +1343,36 @@ cases:
       test.mdx:11:26:T.Marker:'XXX' left in text
       test.mdx:15:21:T.Marker:'XXX' left in text
 
+  - name: mdx/childless-element
+    about: a self-closing element that spans lines is code, and the prose
+      after it is found where it is when the element's attributes hold the
+      same words; the element's text used to be masked out of the search
+      context as well as rendered as code, which lost the prose's alert
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        T.Marker = YES
+      styles/T/Marker.yml: |
+        extends: existence
+        message: "'%s' left in text"
+        level: error
+        tokens:
+          - XXX
+      test.mdx: |
+        <Card
+          title={'An XXX marker in a title'}
+          href="/x"
+        />
+
+        Prose with an XXX marker.
+    args: test.mdx
+    exit: 1
+    want: |
+      test.mdx:6:15:T.Marker:'XXX' left in text
+
   - name: mdx/jsx-children-ignored
     about: "#1155 -- IgnoredClasses excludes one component's children, since
       the element's name is their class."
@@ -1337,6 +1528,42 @@ cases:
       test.mdx:3:23:Vale.Spelling:Did you really mean 'Deprecatedd'?
       test.mdx:3:53:Vale.Spelling:Did you really mean 'lastt'?
 
+  - name: mdx/one-line-element-then-fence
+    about: "#1194 -- a one-line element with text is a paragraph holding an
+      inline element, and the code fence on the line after it is code. The
+      HTML block parser used to take the line and run to the next blank line,
+      fence and all."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.mdx]
+        BasedOnStyles = T
+      styles/T/Rule.yml: |
+        extends: existence
+        message: "found %s"
+        level: error
+        nonword: true
+        tokens:
+          - gItHuB
+          - scm
+          - nonprodAccount
+          - clickk
+      test.mdx: |
+        <details>
+          <summary>[`gItHuB` example][example] --- I am long, clickk me to expand</summary>
+        ```hcl
+            "scm": {
+              "account": "{{ $nonprodAccount }}"
+            }
+        ```
+        </details>
+    args: --output=line test.mdx
+    exit: 1
+    want: |
+      test.mdx:2:55:T.Rule:found clickk
+
   - name: mdx/located-past-markup
     about: "An alert is placed by searching the source for its text, and the
       search skips JSX tags, expressions, ESM, and fenced code. A heading
@@ -1466,6 +1693,54 @@ cases:
     exit: 0
     want: |
       test.md:3:2:Vale.Terms:Use 'GitHub' instead of 'github'.
+
+  - name: encoded-link-target
+    about: "#1218 -- a link target written percent-encoded, or with a `+`,
+      is masked as written. It was decoded first, and the decoded form,
+      absent from the source, was masked word by word onto prose elsewhere,
+      which dropped a later alert. A target the author wrote with a space
+      is still found by its decoded form."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Dash.yml: |
+        extends: existence
+        message: "dash"
+        level: error
+        nonword: true
+        tokens:
+          - '—'
+      encoded.md: |
+        Intro — see the
+        [a b](a%20b.md)
+
+        Then one — and two — see the [a b](a%20b.md).
+      plus.md: |
+        Intro — see the
+        [a b](a+b.md)
+
+        Then one — and two — see the [a b](a+b.md).
+      spaced.md: |
+        Intro — see the
+        [a b](<a b.md>)
+
+        Then one — and two — see the [a b](<a b.md>).
+    args: --output=line encoded.md plus.md spaced.md
+    exit: 1
+    want: |
+      encoded.md:1:7:T.Dash:dash
+      encoded.md:4:10:T.Dash:dash
+      encoded.md:4:20:T.Dash:dash
+      plus.md:1:7:T.Dash:dash
+      plus.md:4:10:T.Dash:dash
+      plus.md:4:20:T.Dash:dash
+      spaced.md:1:7:T.Dash:dash
+      spaced.md:4:10:T.Dash:dash
+      spaced.md:4:20:T.Dash:dash
 
   - name: dita-token-ignores
     about: "#407 -- ignore patterns apply to DITA. The toolkit reads its
@@ -1655,6 +1930,76 @@ cases:
       test.pl:5:21:vale.Annotations:'XXX' left in text
       test.pl:8:7:vale.Annotations:'TODO' left in text
 
+  - name: javascript-modules
+    about: "`.mjs` and `.cjs` are JavaScript, and `.mts` and `.cts` are
+      TypeScript, with no mapping needed"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Tok = YES
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        tokens:
+          - ZQX
+      a.mjs: |
+        // ZQX in a comment
+        export const s = "ZQX in a string";
+      b.cjs: |
+        /* ZQX in a block */
+        module.exports = "ZQX in a string";
+      c.mts: |
+        // ZQX in a comment
+        export const s: string = `ZQX in a template`;
+      d.cts: |
+        // ZQX in a comment
+        const s: string = "ZQX in a string";
+    args: a.mjs b.cjs c.mts d.cts
+    exit: 1
+    want: |
+      a.mjs:1:4:T.Tok:'ZQX' found
+      b.cjs:1:4:T.Tok:'ZQX' found
+      c.mts:1:4:T.Tok:'ZQX' found
+      d.cts:1:4:T.Tok:'ZQX' found
+
+  - name: doc-opener-by-language
+    about: "a comment opening with the name the declaration below it carries
+      reads that name as code where the language's convention asks for it --
+      Go, C, C++, Rust -- and as prose everywhere else"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Tok = YES
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        tokens:
+          - Zqxify
+          - Zqxback
+      a.go: |
+        package main
+
+        // Zqxify / Zqxback turn their input around.
+        var Zqxify, Zqxback = 1, 2
+      b.c: |
+        // Zqxify turns its input around.
+        void Zqxify(void) {}
+      c.js: |
+        // Zqxify turns its input around.
+        function Zqxify() {}
+    args: a.go b.c c.js
+    exit: 1
+    want: |
+      c.js:1:4:T.Tok:'Zqxify' found
+
   - name: php
     args: test.php
     exit: 0
@@ -1811,3 +2156,267 @@ cases:
     exit: 1
     want: |
       test.md:7:14:T.Spacing:No space at 'e.R'.
+
+  - name: text-chapters
+    about: "a plain-text manuscript that marks its chapters -- a line of its
+      own reading Chapter One, Prologue, Part II, or a bare number -- is read
+      as a document: the lines are headings, each opens a section, a first
+      short line followed by a chapter is the title, and a row of asterisks
+      is a scene break. Prose rules land where they always did, and the
+      chapter rules a Markdown manuscript gets now reach the .txt one."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.txt]
+        BasedOnStyles = M
+      styles/M/Chapter.yml: |
+        extends: metric
+        message: "A chapter of %s words."
+        level: warning
+        scope: 'doc(section:has(> h2))'
+        formula: words
+        condition: "< 20"
+      styles/M/Heading.yml: |
+        extends: existence
+        message: "'%s' in a heading."
+        level: warning
+        scope: heading
+        tokens:
+          - Draft
+      styles/M/Very.yml: |
+        extends: existence
+        message: "'%s' outside speech."
+        level: warning
+        scope: ~quote
+        tokens:
+          - very
+      story.txt: |
+        The Long Way Home
+
+        Chapter One (Draft)
+
+        It was very late when she left. "I am very sure," he said. She did not answer him at all.
+
+        * * *
+
+        He waited by the door for a very long time.
+
+        Chapter Two
+
+        Nothing happened.
+      plain.txt: |
+        Chapter one was long, and the chapter after it was very long too.
+    args: .
+    exit: 0
+    want: |
+      plain.txt:1:52:M.Very:'very' outside speech.
+      story.txt:3:14:M.Heading:'Draft' in a heading.
+      story.txt:5:8:M.Very:'very' outside speech.
+      story.txt:9:29:M.Very:'very' outside speech.
+      story.txt:11:1:M.Chapter:A chapter of 4.00 words.
+
+  - name: org-keywords
+    about: |
+      The title and author keywords are prose and a headline's tags are not,
+      and a footnote's definition is reported where the source has it rather
+      than at the end of the document, where the converter puts it.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.org]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      notes.org: |
+        #+TITLE: A guide to the storag layer
+        #+AUTHOR: Josph
+        #+OPTIONS: toc:nil
+
+        * Setup :urgnt:
+
+        The cache is optionl.[fn:1] It can be inlned.[fn:: An inlne note.]
+
+        [fn:1] The defalt is read once.
+
+        More text follows the fotnote.
+    args: notes.org
+    exit: 1
+    want: |
+      notes.org:1:25:Vale.Spelling:Did you really mean 'storag'?
+      notes.org:2:11:Vale.Spelling:Did you really mean 'Josph'?
+      notes.org:7:14:Vale.Spelling:Did you really mean 'optionl'?
+      notes.org:7:39:Vale.Spelling:Did you really mean 'inlned'?
+      notes.org:7:55:Vale.Spelling:Did you really mean 'inlne'?
+      notes.org:9:12:Vale.Spelling:Did you really mean 'defalt'?
+      notes.org:11:23:Vale.Spelling:Did you really mean 'fotnote'?
+
+  - name: html-samp
+    about: "`samp` holds sample output, and is ignored like `code` and `kbd`."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.html]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      page.html: |
+        <p>Press <kbd>Ctrl</kbd> and read <samp>okk: ready</samp>, then see the resutl.</p>
+    args: page.html
+    exit: 1
+    want: |
+      page.html:1:73:Vale.Spelling:Did you really mean 'resutl'?
+
+  - name: code-conventions
+    about: |
+      A doc comment's convention is not prose: a Go doc comment opens with
+      the name it documents and links in brackets, JSDoc and reStructuredText
+      docstrings tag their parameters, and a directive addressed to a tool is
+      not read at all.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      main.go: |
+        //go:build linux || darwn
+
+        // Package demo handls the cache.
+        package demo
+
+        // Reads returns the recrd. See [Reader] and [fmt.Errorf].
+        func Reads() {} //nolint:gocritc
+
+        type T struct {
+        	// Nme is the identifer.
+        	Nme string
+        }
+      app.py: |
+        def f(x):  # noqa: E501 typoo
+            """Reads the recrd.
+
+            :param x: the identifer to look up
+            :raises ValueError: when the boundd is exceeded
+            """
+            return x  # type: ignore
+      app.js: |
+        /**
+         * Reads the recrd.
+         *
+         * @example
+         * const vaule = read(x);
+         *
+         * @param {string} nme - The identifer to look up.
+         * @returns {Promise<object>} The paylod.
+         */
+        function read(nme) {} // eslint-disable-line no-unusd-vars
+    args: main.go app.py app.js
+    exit: 1
+    want: |
+      app.js:2:14:Vale.Spelling:Did you really mean 'recrd'?
+      app.js:7:30:Vale.Spelling:Did you really mean 'identifer'?
+      app.js:8:35:Vale.Spelling:Did you really mean 'paylod'?
+      app.py:2:18:Vale.Spelling:Did you really mean 'recrd'?
+      app.py:4:19:Vale.Spelling:Did you really mean 'identifer'?
+      app.py:5:34:Vale.Spelling:Did you really mean 'boundd'?
+      main.go:3:17:Vale.Spelling:Did you really mean 'handls'?
+      main.go:6:22:Vale.Spelling:Did you really mean 'recrd'?
+      main.go:10:16:Vale.Spelling:Did you really mean 'identifer'?
+
+  - name: html-meta-description
+    about: A page's description is prose the page shows nowhere, and is linted.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.html]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      page.html: |
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="description" content="How the cache behaves on restrt">
+          <meta property="og:description" content="The shrt version">
+          <title>A guide to the storag layer</title>
+        </head>
+        <body><p>Hello.</p></body>
+        </html>
+    args: page.html
+    exit: 1
+    want: |
+      page.html:4:62:Vale.Spelling:Did you really mean 'restrt'?
+      page.html:5:48:Vale.Spelling:Did you really mean 'shrt'?
+      page.html:6:25:Vale.Spelling:Did you really mean 'storag'?
+
+  - name: html-figure
+    about: A figure's caption and its image's alt text are prose.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.html]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      page.html: |
+        <p>Intro.</p>
+        <figure>
+          <img src="x.png" alt="Diagram of the pipline">
+          <figcaption>The pipline over time.</figcaption>
+        </figure>
+        <p>After.</p>
+    args: page.html
+    exit: 1
+    want: |
+      page.html:3:40:Vale.Spelling:Did you really mean 'pipline'?
+      page.html:4:19:Vale.Spelling:Did you really mean 'pipline'?
+
+  - name: qdoc-inline-omit
+    about: An omission closed on its own line ends there.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.qdoc]
+        BasedOnStyles = Vale
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/.keep: ""
+      page.qdoc: |
+        /*!
+            \page a.html
+            \title A guide
+
+            \omit oldname is kept \endomit The recrod is read once.
+
+            \note The connexion limit applies.
+        */
+    args: page.qdoc
+    exit: 1
+    want: |
+      page.qdoc:5:40:Vale.Spelling:Did you really mean 'recrod'?

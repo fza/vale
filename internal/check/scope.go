@@ -3,7 +3,6 @@ package check
 import (
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -64,7 +63,7 @@ type Scope struct {
 }
 
 // inlineScopes are the scopes an inline element carries on its own.
-var inlineScopes = map[string]bool{"link": true, "strong": true, "emphasis": true, "code": true}
+var inlineScopes = map[string]bool{"link": true, "strong": true, "emphasis": true, "code": true, "quote": true}
 
 func NewSelector(value []string) Selector {
 	negated := false
@@ -262,13 +261,64 @@ func docID(sel string) string {
 	return fmt.Sprintf("%08x", h.Sum32())
 }
 
-// reHasChild is the standard spelling of "has a child matching", which
-// cascadia only knows by its own name.
-var reHasChild = regexp.MustCompile(`:has\(\s*>\s*`)
-
 // compileSelector parses a `doc(...)` selector.
-func compileSelector(sel string) (cascadia.Sel, error) {
-	return cascadia.Parse(reHasChild.ReplaceAllString(sel, ":haschild("))
+//
+// A group, `h2, h3`, is accepted at the top level as it is inside `:has()`:
+// the single-selector parser stopped at the comma and reported the rest as
+// left over.
+func compileSelector(sel string) (cascadia.Matcher, error) {
+	return cascadia.ParseGroup(standardSelector(sel))
+}
+
+// standardSelector spells the parts of Selectors Level 4 that cascadia does
+// not parse in the parts it does.
+//
+// `:is(a, b)` and `:where(a, b)` match an element that matches any of the
+// group, which is `:not(:not(a, b))` exactly; they differ only in
+// specificity, which nothing here reads. The rewrite walks the selector
+// rather than matching it, so a `:is(` inside a quoted string, as in
+// `:contains(":is(")`, is left alone and the closing parenthesis it adds
+// lands on the one that closes the pseudo-class.
+func standardSelector(sel string) string {
+	var out strings.Builder
+	var quote rune
+	var extra []int // the depth at which each added `:not(` closes
+	depth := 0
+
+	for i := 0; i < len(sel); {
+		r := rune(sel[i])
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ':':
+			for _, name := range []string{":is(", ":where("} {
+				if len(sel)-i >= len(name) && strings.EqualFold(sel[i:i+len(name)], name) {
+					out.WriteString(":not(:not(")
+					depth++
+					extra = append(extra, depth)
+					i += len(name)
+					goto next
+				}
+			}
+		case r == '(':
+			depth++
+		case r == ')':
+			if n := len(extra); n > 0 && extra[n-1] == depth {
+				out.WriteByte(')')
+				extra = extra[:n-1]
+			}
+			depth--
+		}
+		out.WriteByte(sel[i])
+		i++
+	next:
+	}
+
+	return out.String()
 }
 
 // DocSelectors returns the selectors named by `doc(...)` terms in a scope,
@@ -311,4 +361,59 @@ func splitOutside(s string, sep rune) []string {
 		}
 	}
 	return append(parts, s[start:])
+}
+
+// expandScopes replaces each named scope in a rule's `scope` with the
+// expression it names. A `scope` is a string or a list, and comes back as a
+// list either way; nil stays nil, since an unset scope has a default of its
+// own that depends on the check.
+func expandScopes(value interface{}, names map[string]string) ([]string, error) {
+	var declared []string
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		declared = []string{v}
+	case []string:
+		declared = v
+	case []interface{}:
+		for _, item := range v {
+			declared = append(declared, fmt.Sprint(item))
+		}
+	default:
+		return nil, fmt.Errorf("'%v' is not a scope", value)
+	}
+
+	expanded := make([]string, 0, len(declared))
+	for _, scope := range declared {
+		parts := splitOutside(scope, '&')
+		for i, part := range parts {
+			term := strings.TrimSpace(part)
+			negated := strings.HasPrefix(term, "~")
+			name := strings.TrimPrefix(term, "~")
+
+			parts[i] = term
+			expr, ok := names[name]
+			if !ok {
+				continue
+			}
+			if len(splitOutside(expr, '&')) > 1 {
+				if negated {
+					return nil, fmt.Errorf(
+						"'~%s' negates a chain, '%s', which has no opposite", name, expr)
+				}
+				// A chain joins the rule's own terms: its `doc(...)` no longer
+				// stands alone, which is what a chain asks for anyway.
+				parts[i] = expr
+				continue
+			}
+			if negated {
+				expr = "~" + expr
+			}
+			parts[i] = expr
+		}
+		expanded = append(expanded, strings.Join(parts, " & "))
+	}
+
+	return expanded, nil
 }

@@ -95,3 +95,38 @@ func TestEvalMathRejectsWithoutRunning(t *testing.T) {
 			elapsed)
 	}
 }
+
+// `round` is a function of the formula's own, since Tengo's math module
+// stops at floor, ceil, and trunc.
+func TestEvalMathRound(t *testing.T) {
+	params := map[string]interface{}{"grade": 9.456}
+
+	for _, tt := range []struct {
+		expr string
+		want float64
+	}{
+		{"round(grade)", 9},
+		{"round(grade, 1)", 9.5},
+		{"round(grade, 2)", 9.46},
+		{"round(2.5)", 3},
+		{"round(-2.5)", -3},
+		{"round(words)", 0},
+	} {
+		t.Run(tt.expr, func(t *testing.T) {
+			params["words"] = 0.0
+			got, err := evalMath(context.Background(), tt.expr, params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	for _, expr := range []string{"round()", "round(1, 2, 3)", `round("x")`, `round(1, "x")`} {
+		if _, err := evalMath(context.Background(), expr, params); err == nil {
+			t.Errorf("%q was accepted", expr)
+		}
+	}
+}

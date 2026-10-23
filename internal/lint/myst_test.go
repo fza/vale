@@ -24,10 +24,22 @@ func TestMystHTML(t *testing.T) {
 			[]string{"volto", "label"},
 		},
 		{
-			"a role keeps its span, loses its braces",
+			"an identifier role keeps its span, loses its braces",
+			"Call {func}`render_page` for that.\n",
+			[]string{"Call <code>render_page</code> for that."},
+			[]string{"{func}", "func}"},
+		},
+		{
+			"a prose role's content is text",
 			"Read the {term}`server-side rendering` glossary entry.\n",
-			[]string{"Read the <code>server-side rendering</code> glossary entry."},
-			[]string{"{term}", "term}"},
+			[]string{"Read the server-side rendering glossary entry."},
+			[]string{"{term}", "<code>"},
+		},
+		{
+			"a titled reference is its title; a bare target is code",
+			"See {ref}`the setup guide <setup>` and {ref}`setup`.\n",
+			[]string{"See the setup guide and <code>setup</code>."},
+			[]string{"{ref}", "&lt;setup&gt;"},
 		},
 		{
 			"substitutions are markup",

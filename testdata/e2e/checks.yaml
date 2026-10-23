@@ -46,6 +46,46 @@ cases:
       test3.md:11:4:demo.CharCount:Topic titles should use fewer than 70 characters.
       test3.md:27:6:demo.CharCount:Topic titles should use fewer than 70 characters.
 
+  - name: occurrence-count-verbs
+    about: "#1199 -- the count fills `%s` or `%d`, whichever the message
+      uses, including when it is zero"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Few.yml: |
+        extends: occurrence
+        message: "Found %s apple(s); need at least 2."
+        level: error
+        scope: text
+        min: 2
+        token: apple
+      styles/T/Many.yml: |
+        extends: occurrence
+        message: "Found %d pear(s); at most 1 allowed."
+        level: error
+        scope: text
+        max: 1
+        token: pear
+      styles/T/None.yml: |
+        extends: occurrence
+        message: "No plum (%s found)."
+        level: error
+        scope: text
+        min: 1
+        token: plum
+      test.md: |
+        One apple, a pear, and a pear.
+    args: test.md
+    exit: 1
+    want: |
+      test.md:1:1:T.None:No plum (0 found).
+      test.md:1:5:T.Few:Found 1 apple(s); need at least 2.
+      test.md:1:14:T.Many:Found 2 pear(s); at most 1 allowed.
+
   - name: sentence-case
     dir: SentenceCase
     args: .
@@ -90,7 +130,7 @@ cases:
     args: .
     exit: 1
     want: |
-      test.md:16:1:Vale.Spelling:Did you really mean 'gitlab'?
+      test.md:16:1:Vale.Spelling:Use 'GitLab' instead of 'gitlab'.
       test.md:28:11:Vale.Spelling:Did you really mean 'typpo'?
       test.md:32:17:Vale.Spelling:Did you really mean 'gfm'?
       test.md:34:17:Vale.Spelling:Did you really mean 'remmark'?
@@ -145,6 +185,86 @@ cases:
       test.md:7:4:write-good.E-Prime:Avoid using "Here's"
       test.md:9:6:write-good.E-Prime:Avoid using "is"
       test.md:9:28:vale.Spacing:Use exactly one space between sentences and clauses. Check 'e.A' for spacing problems.
+
+  - name: existence-wrapped-line
+    about: "#1185 -- a token that spans a line break matches the same in a
+      paragraph, a list item, and a blockquote: the source's indentation and
+      quote markers after the break do not keep the alert from being placed."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Phrase.yml: |
+        extends: existence
+        message: "found '%s'"
+        level: warning
+        tokens:
+          - 'the\s+old\s+model'
+      wrap.md: |
+        Paragraph: this is the old
+        model here.
+
+        - Bullet: this is the old
+          model here.
+
+        > Quote: this is the old
+        > model here.
+
+        1. Numbered: this is the old
+           model here.
+    args: wrap.md
+    exit: 0
+    want: |
+      wrap.md:1:20:T.Phrase:found 'the old model'
+      wrap.md:4:19:T.Phrase:found 'the old model'
+      wrap.md:7:18:T.Phrase:found 'the old model'
+      wrap.md:10:22:T.Phrase:found 'the old model'
+
+  - name: existence-link-only-paragraph
+    about: "#1186 -- a paragraph that opens with inline content is placed at
+      its own source text, not at the next place the same text follows a
+      space; a later repeat of the match is reported as well as the first."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Phrase.yml: |
+        extends: existence
+        message: "found '%s'"
+        level: warning
+        tokens:
+          - 'the\s+old\s+model'
+          - legacy
+      drop.md: |
+        [the old model](https://example.com/)
+
+        Later the old model again.
+      drop2.md: |
+        Earlier the old model in prose.
+
+        [the old model](https://example.com/)
+      fm.md: |
+        ---
+        title: The legacy title
+        description: A legacy description.
+        ---
+
+        Body.
+    args: .
+    exit: 0
+    want: |
+      drop.md:1:2:T.Phrase:found 'the old model'
+      drop.md:3:7:T.Phrase:found 'the old model'
+      drop2.md:1:9:T.Phrase:found 'the old model'
+      drop2.md:3:2:T.Phrase:found 'the old model'
+      fm.md:2:12:T.Phrase:found 'legacy'
+      fm.md:3:16:T.Phrase:found 'legacy'
 
   - name: existence-raw-percent
     about: "a raw pattern is joined into a printf template, so a `%` in it
@@ -263,6 +383,58 @@ cases:
     want: |
       test.md:2:30:T.SentenceLength:Try to keep sentences short (< 30 words).
 
+  - name: occurrence-summary-anchor
+    about: "#1191 -- a summary-scoped `occurrence` alert lands on the prose it
+      counted. The summary holds neither front matter, code, nor headings, so a
+      copy of the match in any of them is not what was counted; searching the
+      file for the match text handed it the alert"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Density.yml: |
+        extends: occurrence
+        message: "'finally' appears %d times"
+        level: suggestion
+        scope: summary
+        max: 1
+        token: 'finally'
+      front.md: |
+        ---
+        summary: finally a value
+        ---
+
+        # Title
+
+        It works finally. It stops finally.
+      code.md: |
+        # Title
+
+        ```sh
+        echo finally
+        ```
+
+        It works finally. It stops finally.
+      heading.md: |
+        # Finally, finally
+
+        It works finally. It stops finally.
+      list.md: |
+        # Finally
+
+        - It works finally.
+        - It stops finally.
+    args: --output=line front.md code.md heading.md list.md
+    exit: 0
+    want: |
+      code.md:7:10:T.Density:'finally' appears 2 times
+      front.md:7:10:T.Density:'finally' appears 2 times
+      heading.md:3:10:T.Density:'finally' appears 2 times
+      list.md:3:12:T.Density:'finally' appears 2 times
+
   - name: existence-eol-anchor
     about: "#892"
     dir: EndOfLine
@@ -296,6 +468,19 @@ cases:
       test2.md:7:1:demo.CapSub:Use 'Change to the `/home/user` directory' instead of 'Change into the `/home/user` directory'.
       test2.md:9:1:demo.CapSub:Use 'Change to the `/etc/X11` directory' instead of 'Change into the `/etc/X11` directory'.
       test2.md:11:6:Bugs.WrongExp:Use 'versus' instead of 'vs '.
+
+  - name: consistency
+    about: "#1184"
+    dir: Consistency
+    args: .
+    exit: 1
+    want: |
+      input.txt:1:3:Test.Quotes:Inconsistent quote style '”'
+      input.txt:3:1:Test.Quotes:Inconsistent quote style '”'
+      input.txt:3:2:Test.Quotes:Inconsistent quote style '’'
+      swapped.txt:1:3:Test.Quotes:Inconsistent quote style '’'
+      swapped.txt:3:1:Test.Quotes:Inconsistent quote style '”'
+      swapped.txt:3:2:Test.Quotes:Inconsistent quote style '’'
 
   - name: style-level
     dir: StyleLevel
@@ -341,6 +526,41 @@ cases:
       test.md:13:14:T.Seq:Sequence matched 'default'.
       test.md:13:22:T.Seq:Sequence matched 'database'.
 
+  - name: sequence-wrapped-repeat
+    about: "#1203 -- a match that wraps into a list item's indented line, or
+      a blockquote's quoted one, is placed at that block when the same words
+      appear later without the indentation; it used to be placed on the later
+      copy and merged with that copy's own alert"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = Demo
+      styles/Demo/Passive.yml: |
+        extends: sequence
+        message: "Passive voice: %s"
+        level: error
+        tokens:
+          - pattern: (?:is|was)
+          - tag: VBN
+      test.md: |
+        - The item opens. The report was
+          generated last night.
+
+        > The quote opens. The report was
+        > generated last night.
+
+        The paragraph opens. The report was
+        generated last night.
+    args: test.md
+    exit: 1
+    want: |
+      test.md:1:30:Demo.Passive:Passive voice: was
+      test.md:4:31:Demo.Passive:Passive voice: was
+      test.md:7:33:Demo.Passive:Passive voice: was
+
   - name: sequence/min
     about: "#899 -- `min` asks for repeated occurrences of a token, each with
       its own `skip` window: a pronoun preceded by two or more nouns, not
@@ -375,6 +595,190 @@ cases:
     exit: 0
     want: |
       test.md:1:30:T.Ambiguous:Avoid ambiguous pronouns.
+
+  - name: sequence-inline-markup
+    about: "#1202 -- a sequence match holding inline markup is placed through
+      the block's runs, at the same span an existence rule reports, instead
+      of being searched for as rewritten text and falling back to the whole
+      line; a repeated sentence places each match at its own position"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.md]
+        BasedOnStyles = T
+      styles/T/Passive.yml: |
+        extends: sequence
+        message: "Passive: %s"
+        level: error
+        tokens:
+          - pattern: (?:is|was)
+          - tag: VBN
+      styles/T/Exist.yml: |
+        extends: existence
+        message: "Existence: %s"
+        level: error
+        nonword: true
+        tokens:
+          - (?:is|was) \*{0,2}\w+ed\*{0,2}
+      test.md: |
+        The report is generated every night.
+
+        Some words come first. Then the report is *generated* every night.
+
+        Some words come first. Then the report is **generated** every night. The report is **generated** again.
+    args: --output=JSON test.md
+    exit: 1
+    want: |
+      {
+        "test.md": [
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              12,
+              23
+            ],
+            "Check": "T.Passive",
+            "Description": "",
+            "Link": "",
+            "Message": "Passive: is",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              12,
+              23
+            ],
+            "Check": "T.Exist",
+            "Description": "",
+            "Link": "",
+            "Message": "Existence: is generated",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 1
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              40,
+              52
+            ],
+            "Check": "T.Passive",
+            "Description": "",
+            "Link": "",
+            "Message": "Passive: is",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 3
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              40,
+              52
+            ],
+            "Check": "T.Exist",
+            "Description": "",
+            "Link": "",
+            "Message": "Existence: is generated",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 3
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              40,
+              53
+            ],
+            "Check": "T.Passive",
+            "Description": "",
+            "Link": "",
+            "Message": "Passive: is",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 5
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              40,
+              53
+            ],
+            "Check": "T.Exist",
+            "Description": "",
+            "Link": "",
+            "Message": "Existence: is generated",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 5
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              81,
+              94
+            ],
+            "Check": "T.Passive",
+            "Description": "",
+            "Link": "",
+            "Message": "Passive: is",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 5
+          },
+          {
+            "Action": {
+              "Name": "",
+              "Params": null
+            },
+            "Suggestions": [],
+            "Span": [
+              81,
+              94
+            ],
+            "Check": "T.Exist",
+            "Description": "",
+            "Link": "",
+            "Message": "Existence: is generated",
+            "Severity": "error",
+            "Match": "is generated",
+            "Line": 5
+          }
+        ]
+      }
 
   - name: sequence
     dir: Sequence
@@ -443,3 +847,62 @@ cases:
       test.md:3:24:Ident.Spelling:'teh' is a typo.
       test.md:5:7:Ident.Spelling:'recieve' is a typo.
       test.md:5:29:Ident.Spelling:'recieve' is a typo.
+
+  - name: script-block-offsets
+    about: "a `script` rule's matches are offsets into the block it was given,
+      and the block is not the file: a paragraph two paragraphs down starts
+      at byte 0 of its own text. Each match is carried to the source through
+      the block's runs, so it lands on the word in Markdown, in plain text,
+      and in a list item, rather than at that byte count from the top of the
+      file."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = S
+      styles/S/Long.yml: |
+        extends: script
+        message: "'%s' is a long word."
+        level: warning
+        scope: paragraph
+        script: |
+          text := import("text")
+          matches := []
+          for m in text.re_find(`[A-Za-z]{12,}`, scope, -1) {
+            matches = append(matches, {begin: m[0].begin, end: m[0].end})
+          }
+      styles/S/Item.yml: |
+        extends: script
+        message: "'%s' in a list item."
+        level: warning
+        scope: list
+        script: |
+          text := import("text")
+          matches := []
+          for m in text.re_find(`[A-Za-z]{12,}`, scope, -1) {
+            matches = append(matches, {begin: m[0].begin, end: m[0].end})
+          }
+      test.md: |
+        # Title
+
+        A short first paragraph.
+
+        Then an *interdepartmental* reorganization, notwithstanding everything.
+
+        - One considerations item.
+      test.txt: |
+        A short first paragraph.
+
+        Then an interdepartmental reorganization, notwithstanding everything.
+    args: .
+    exit: 0
+    want: |
+      test.md:5:10:S.Long:'interdepartmental' is a long word.
+      test.md:5:29:S.Long:'reorganization' is a long word.
+      test.md:5:45:S.Long:'notwithstanding' is a long word.
+      test.md:7:7:S.Item:'considerations' in a list item.
+      test.txt:3:9:S.Long:'interdepartmental' is a long word.
+      test.txt:3:27:S.Long:'reorganization' is a long word.
+      test.txt:3:43:S.Long:'notwithstanding' is a long word.

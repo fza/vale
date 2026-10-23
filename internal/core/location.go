@@ -130,6 +130,11 @@ func quoteTolerantPattern(s string) string {
 			b.WriteString(`['\x{2018}\x{2019}]`)
 		case '"':
 			b.WriteString(`["\x{201c}\x{201d}]`)
+		case '\n':
+			// A line break in a match is a break in the block's text; in the
+			// source it may be followed by a list item's indentation or a
+			// blockquote's `>`, which the block's text does not carry.
+			b.WriteString(`\n(?:[ \t]|>)*`)
 		default:
 			b.WriteString(regexp.QuoteMeta(string(r)))
 		}
@@ -243,18 +248,38 @@ func directPosition(ctx string, idx, from int, sub string) bool {
 	return !strings.Contains(ctx[from:idx], sub)
 }
 
-// throughMask reports whether ctx begins with txt, a masked byte in ctx
-// standing for any byte of txt.
+// throughMask reports whether ctx begins with txt, a masked rune in ctx
+// standing for any rune of txt. Rune by rune: a mask keeps the rune count,
+// not the byte count, since a multi-byte rune is masked as a single `#`.
 func throughMask(ctx, txt string) bool {
-	if len(ctx) < len(txt) {
-		return false
-	}
-	for i := 0; i < len(txt); i++ {
-		if c := ctx[i]; c != txt[i] && c != '#' && c != '@' {
+	for _, want := range txt {
+		if ctx == "" {
 			return false
 		}
+		got, n := utf8.DecodeRuneInString(ctx)
+		if got != want && got != '#' && got != '@' {
+			return false
+		}
+		ctx = ctx[n:]
 	}
 	return true
+}
+
+// maskedOffset maps the byte offset at in ctx to the same rune in masked, a
+// copy of ctx that masking has shortened. The runes still line up, so the
+// offset is carried over by rune count.
+func maskedOffset(ctx, masked string, at int) int {
+	if at <= 0 || at > len(ctx) || len(ctx) == len(masked) {
+		return at
+	}
+	runes := utf8.RuneCountInString(ctx[:at])
+	for i := range masked {
+		if runes == 0 {
+			return i
+		}
+		runes--
+	}
+	return len(masked)
 }
 
 // located is positionOf with the match's byte index in the unmasked context.
@@ -269,6 +294,16 @@ func located(ctx string, idx int, sub string, shift int) (int, string, int) {
 // occurrence when hit is not where it was found.
 func maskMatch(ctx, match string, hit int) string {
 	end := hit + len(match)
+	if hit >= 0 && hit <= len(ctx) && strings.Contains(match, "\n") &&
+		(end > len(ctx) || ctx[hit:end] != match) {
+		// A wrapped match reads past the source's indentation or quote
+		// markers, so the text at hit is longer than the match.
+		pat := regexp.MustCompile(`^` + quoteTolerantPattern(match))
+		if fs := pat.FindStringIndex(ctx[hit:]); fs != nil {
+			end = hit + fs[1]
+			match = ctx[hit:end]
+		}
+	}
 	if hit < 0 || end > len(ctx) || ctx[hit:end] != match {
 		masked, _ := Substitute(ctx, match, '#')
 		return masked

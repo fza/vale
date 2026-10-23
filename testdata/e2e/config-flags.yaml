@@ -100,7 +100,7 @@ cases:
     args: "--glob=[a-]* ."
     exit: 2
     want: |
-      expected close range character
+      [--glob]:E100:expected close range character
 
   - name: no-config-found
     dir: ../../../..
@@ -108,7 +108,7 @@ cases:
     requires: asciidoctor, dita, rst2html, xsltproc
     exit: 2
     contains: |
-      E100 [.vale.ini not found] Runtime error
+      [.vale.ini not found]:E100:no config file found
 
   - name: formats-by-name
     about: a `[formats]` key may name a file, so an extensionless one is read as markup
@@ -134,3 +134,32 @@ cases:
     exit: 1
     want: |
       COMMIT_EDITMSG:1:30:Test.Term:Use 'flag' instead of 'option'.
+
+  - name: formats-code-grammar
+    about: a `[formats]` key that maps an extension to a code format reads its
+      comments with that format's grammar; `.es` has none of its own and was
+      read by the regex fallback, which found no comments at all
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [formats]
+        es = js
+
+        [*.es]
+        BasedOnStyles = Test
+      styles/Test/Term.yml: |
+        extends: existence
+        message: "Use 'flag' instead of '%s'."
+        level: error
+        tokens:
+          - option
+      test.es: |
+        // Read the option first.
+        const a = 1; /* and this option */
+    args: test.es
+    exit: 1
+    want: |
+      test.es:1:13:Test.Term:Use 'flag' instead of 'option'.
+      test.es:2:26:Test.Term:Use 'flag' instead of 'option'.

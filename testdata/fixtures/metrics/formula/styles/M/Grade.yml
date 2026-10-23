@@ -1,0 +1,8 @@
+extends: metric
+message: "grade: %s"
+
+# The readability scores are variables, and `round` is the formula's own:
+# a grade is reported to one place.
+formula: round(flesch_kincaid, 1)
+
+condition: "> 0"

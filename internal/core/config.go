@@ -44,6 +44,7 @@ var (
 	FilterDir = filepath.Join(ConfigDir, "filters")
 	ScriptDir = filepath.Join(ConfigDir, "scripts")
 	ViewDir   = filepath.Join(ConfigDir, "views")
+	ScopeDir  = filepath.Join(ConfigDir, "scopes")
 )
 
 // ConfigDirs is a list of all directories that contain user-defined, non-style
@@ -57,6 +58,7 @@ var ConfigDirs = []string{
 	ScriptDir,
 	FilterDir,
 	ViewDir,
+	ScopeDir,
 }
 
 // ConfigVars is a list of all supported environment variables.
@@ -76,6 +78,12 @@ var configNames = []string{
 	"vale.ini",
 	".vale.ini",
 	"_vale.ini",
+}
+
+// nestedConfigNames are checked at each level of the search after
+// configNames, so a root-level file wins. See #1212.
+var nestedConfigNames = []string{
+	filepath.Join(".config", "vale.ini"),
 }
 
 // FindConfigAsset tries to locate a Vale-related resource by looking in the
@@ -177,6 +185,7 @@ type CLIFlags struct {
 	Filter        string
 	Apply         bool
 	Counts        bool
+	Coverage      bool
 	Local         bool
 	NoExit        bool
 	NoColor       bool
@@ -201,6 +210,7 @@ type Config struct {
 	Checks            []string                     // All checks to load
 	Formats           map[string]string            // A map of unknown -> known formats
 	Asciidoctor       map[string]string            // A map of asciidoctor attributes
+	Sphinx            map[string]string            // The `[sphinx]` section: a project's directives and roles
 	FormatToLang      map[string]string            // A map of format to lang ID
 	GBaseStyles       []string                     // Global base style
 	GChecks           map[string]bool              // Global checks
@@ -215,6 +225,7 @@ type Config struct {
 	SLevels           map[string]map[string]string // Syntax-specific level changes
 	SUnsets           map[string][]string          // Keys a section marked UNSET
 	SVocab            map[string][]string          // Vocabularies a section names
+	StyleSources      map[string]string            // The file each section's BasedOnStyles comes from
 	Vocabularies      map[string]*Vocabulary       // Every vocabulary loaded, by name
 	SkippedScopes     []string                     // A list of HTML blocks to ignore
 	Stylesheets       map[string]string            // XSLT stylesheet
@@ -222,6 +233,7 @@ type Config struct {
 	CommentDelimiters map[string][2]string         // Strings to treat as comment delimiters. Indicates the start and end delimiters.
 	WordTemplate      string                       // The template used in YAML -> regexp list conversions
 	RootINI           string                       // the path to the project's .vale.ini file
+	RootDir           string                       // the directory the search found RootINI at
 	Paths             []string                     // A list of paths to search for styles
 	ConfigFiles       []string                     // A list of configuration files to load
 	NestedFiles       []string                     // Configuration files read from directories beneath the root
@@ -233,8 +245,14 @@ type Config struct {
 
 	cache    *sync.Map            // what checks build from this configuration, by key
 	SecToPat map[string]glob.Glob `json:"-"`
-	Styles   []string             `json:"-"`
-	Views    map[string]*View     `json:"-"`
+	// SecToCond holds the condition of a section written `[glob if expr]`.
+	SecToCond map[string]*Condition `json:"-"`
+	Styles    []string              `json:"-"`
+	Views     map[string]*View      `json:"-"`
+
+	// Scopes are the named scopes found under `config/scopes`, by name.
+	Scopes       map[string]string `json:"-"`
+	scopesLoaded bool
 
 	NLPEndpoint string // An external API to call for NLP-related work.
 
@@ -253,6 +271,7 @@ func NewConfig(flags *CLIFlags) (*Config, error) {
 	cfg.Flags = flags
 	cfg.Formats = make(map[string]string)
 	cfg.Asciidoctor = make(map[string]string)
+	cfg.Sphinx = make(map[string]string)
 	cfg.GChecks = make(map[string]bool)
 	cfg.MinAlertLevel = 0
 	cfg.RuleToLevel = make(map[string]string)
@@ -265,11 +284,13 @@ func NewConfig(flags *CLIFlags) (*Config, error) {
 	cfg.Vocabularies = make(map[string]*Vocabulary)
 	cfg.cache = &sync.Map{}
 	cfg.SecToPat = make(map[string]glob.Glob)
+	cfg.SecToCond = make(map[string]*Condition)
 	cfg.Stylesheets = make(map[string]string)
 	cfg.TokenIgnores = make(map[string][]string)
 	cfg.CommentDelimiters = make(map[string][2]string)
 	cfg.FormatToLang = make(map[string]string)
 	cfg.Views = make(map[string]*View)
+	cfg.Scopes = make(map[string]string)
 	cfg.Paths = []string{}
 	cfg.ConfigFiles = []string{}
 
@@ -295,10 +316,21 @@ func (c *Config) AddStylesPath(path string) {
 	}
 }
 
+// setRoot records the config file a run is reading and its project root: the
+// file's own directory. The search sets both itself, since a `.config/vale.ini`
+// is found a level above its directory.
+func (c *Config) setRoot(file string) {
+	if abs, err := filepath.Abs(file); err == nil {
+		file = abs
+	}
+	c.RootINI = file
+	c.RootDir = filepath.Dir(file)
+}
+
 // ConfigFile returns the last configuration file in the list.
 //
-// This represents the user's project-agnostic configuration file -- i.e., the
-// last one that was added.
+// The user's project-agnostic file is added first, so this is the project's
+// own file when a run has one.
 func (c *Config) ConfigFile() string {
 	if len(c.ConfigFiles) > 0 {
 		return c.ConfigFiles[len(c.ConfigFiles)-1]
@@ -345,7 +377,7 @@ type Vocabulary struct {
 // SectionVocabs names every vocabulary some section uses.
 func (c *Config) SectionVocabs() []string {
 	var names []string
-	for _, sec := range c.RuleKeys {
+	for _, sec := range append([]string{"*"}, c.RuleKeys...) {
 		for _, name := range c.SVocab[sec] {
 			if !StringInSlice(name, names) {
 				names = append(names, name)
@@ -445,4 +477,15 @@ func MockLoad(project, local string, cfg *Config) error {
 
 	_, err = processConfig(uCfg, cfg, true)
 	return err
+}
+
+// SphinxNames returns one list from the `[sphinx]` section, lowercased.
+func (c *Config) SphinxNames(key string) []string {
+	out := []string{}
+	for _, n := range strings.Split(c.Sphinx[key], ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, strings.ToLower(n))
+		}
+	}
+	return out
 }
