@@ -1,0 +1,48 @@
+name: release (fza)
+
+# A fork release: a tag `v<upstream base>-fza.<N>` builds macOS and Linux,
+# publishes the GitHub release and writes the cask into the owner's tap.
+# Upstream's own release in main.yml skips these tags.
+on:
+  push:
+    tags: ['v*-fza.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # The image's own GoReleaser predates cask install steps, so a pinned
+      # one is installed on the runner and run inside the image instead.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.19.0
+          install-only: true
+
+      # Vale's parsers are cgo, so the build runs in an image carrying a
+      # cross-compiler per target, osxcross among them. The checkout is owned
+      # by the runner and read by the container's root, which git refuses
+      # without the safe.directory override.
+      - name: GoReleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_CASK_SKIP_UPLOAD: ${{ vars.HOMEBREW_CASK_SKIP_UPLOAD }}
+        run: |
+          docker run --rm \
+            -e CGO_ENABLED=1 \
+            -e GITHUB_TOKEN -e HOMEBREW_TAP_TOKEN -e HOMEBREW_CASK_SKIP_UPLOAD \
+            -e GITHUB_REPOSITORY_OWNER \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$(command -v goreleaser)":/usr/local/bin/goreleaser-pinned:ro \
+            -v "$PWD":/go/src/github.com/vale-cli/vale/v3 \
+            -w /go/src/github.com/vale-cli/vale/v3 \
+            --entrypoint /usr/local/bin/goreleaser-pinned \
+            ghcr.io/goreleaser/goreleaser-cross:v1.26.10 \
+            release --clean -f .goreleaser.fza.yml

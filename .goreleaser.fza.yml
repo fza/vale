@@ -1,0 +1,90 @@
+version: 2
+
+# The fork's release, kept apart from upstream's `.goreleaser.yml` so that file
+# stays upstream's. A tag `v<upstream base>-fza.<N>` runs it through
+# `.github/workflows/release-fza.yml`; see CHANGES.fza.md, "Releases".
+project_name: vale
+
+env:
+  - CGO_ENABLED=1
+
+# Vale's parsers are cgo, so each target builds with the cross-compiler the
+# goreleaser-cross image carries for it. The version is the tag as written,
+# `v` included, which is what `vale --version` prints and what a consumer
+# pinning a tag compares against.
+builds:
+  - id: vale-darwin-amd64
+    main: ./cmd/vale
+    binary: vale
+    goos: [darwin]
+    goarch: [amd64]
+    env: [CC=o64-clang, CXX=o64-clang++]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Tag }}"]
+
+  - id: vale-darwin-arm64
+    main: ./cmd/vale
+    binary: vale
+    goos: [darwin]
+    goarch: [arm64]
+    env: [CC=oa64-clang, CXX=oa64-clang++]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Tag }}"]
+
+  - id: vale-linux-amd64
+    main: ./cmd/vale
+    binary: vale
+    goos: [linux]
+    goarch: [amd64]
+    env: [CC=x86_64-linux-gnu-gcc, CXX=x86_64-linux-gnu-g++]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Tag }}"]
+
+  - id: vale-linux-arm64
+    main: ./cmd/vale
+    binary: vale
+    goos: [linux]
+    goarch: [arm64]
+    env: [CC=aarch64-linux-gnu-gcc, CXX=aarch64-linux-gnu-g++]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Tag }}"]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "vale_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+# GITHUB_REPOSITORY_OWNER is set by GitHub Actions, so the release, the tap
+# and the cask homepage follow whichever repository runs the release.
+homebrew_casks:
+  - name: vale
+    # Every fork tag is a semver prerelease, which `auto` would skip; the fork
+    # sets the Actions variable HOMEBREW_CASK_SKIP_UPLOAD to false.
+    skip_upload: "{{ with .Env.HOMEBREW_CASK_SKIP_UPLOAD }}{{ . }}{{ else }}auto{{ end }}"
+    repository:
+      owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/vale"
+    description: Prose linter, built from a fork of Vale
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/vale"]
+          end
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^chore"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: vale
+  # A fork tag reads as a prerelease, and is the fork's full release.
+  prerelease: "false"
