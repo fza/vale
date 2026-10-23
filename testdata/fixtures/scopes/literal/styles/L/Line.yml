@@ -1,0 +1,7 @@
+extends: existence
+message: "'%s' in a one-line literal"
+level: error
+nonword: true
+scope: literal.line
+raw:
+  - 'ZQX'
