@@ -1,15 +1,15 @@
 # Fork additions
 
-`fza/vale`, branch `v3`, carries work `errata-ai/vale` does not have. This is the
+`fza/vale`, branches `fza` and `v3`, carries work `errata-ai/vale` does not have. This is the
 catalogue of it: what each addition does, why it exists, the surface it exposes,
 and the tests that hold it. Nothing here is upstream's, so a merge that drops any
 of it is a silent regression rather than a conflict.
 
-The fork branched from upstream at `5d338235` (`v3.19.0-6`). List the commits
-that carry this work with:
+The fork sits on upstream `v3.25.1`. Each change is a branch of its own merged
+into `fza` (see "Branches"), so the changes are listed one merge per line with:
 
 ```bash
-git log --oneline v3.22.0..HEAD
+git log --first-parent --oneline upstream/v3..fza
 ```
 
 ## User-facing surface
@@ -42,22 +42,6 @@ rule matches as a pattern and therefore reports none of them.
 - `internal/check/manager.go` — `vocabSpellings`, called from `loadVocabRules`.
 - `internal/check/manager_test.go` — `TestVocabSpellings`.
 
-### An accepted phrase matches across any whitespace
-
-An accepted phrase is compiled into a pattern, so the literal spacing between
-its words decided what it matched. A writer who wrapped a line between the two
-words of an accepted phrase got the component word reported, which reads as a
-rule firing on correct text. The whitespace inside a phrase matches any run of
-it, so the phrase means the same thing however it is spaced.
-
-Upstream carries this as `termPattern`, which also escapes the periods of a
-literal term and is applied to the exception list as well as to the phrase
-list. That is the wider fix, so it is the one in place; the fork keeps only its
-test.
-
-- `internal/check/definition.go` — `termPattern` (upstream).
-- `internal/check/existence_test.go` — `TestExceptionPhraseSpansAnyWhitespace`.
-
 ### A `vale` directive is honoured inside a source comment
 
 A directive suppressed rules in markup and did nothing in source, so a comment
@@ -68,7 +52,7 @@ a line the directive suppressed, is blank rather than absent — so an alert sti
 maps back onto the source through the comment's strip table. The toggle state
 reaches the file, so a directive carries into later comments.
 
-- `internal/lint/code.go` — `eachDirectiveRun`, wrapping the lint call in `lintCode`.
+- `internal/lint/code.go` — `eachDirectiveRun`, wrapping the call to `lintComment` in `lintCode`, which takes each run's text rather than the comment's own. A comment converted as part of a reStructuredText batch is linted from the batch only while the run is the whole comment.
 - `internal/core/file.go` — `IsCommentControl`.
 - `internal/lint/code_test.go`.
 
@@ -105,11 +89,20 @@ so `</vale off>` is not valid HTML and a Markdown parser escapes it into
 paragraph text. Only a line holding nothing else is rewritten, and never one
 inside a fence, so a document showing a directive keeps showing it.
 
+The rewritten comment is then located in the source by the tag it came from.
+`</vale off>` reaches the walker as `vale on`, a text the source does not hold,
+so a plain search found no position and the region `<vale off>` opened was never
+closed, suppressing every alert to the end of the file. The located tag is
+masked out of the source whole: masking the comment's words one by one instead
+consumed matching words of the prose, such as the `on` in `environment`, and
+the alert on them could no longer be placed.
+
 - `internal/core/file.go` — `NormalizeDirective`, `valeTagRE`.
 - `internal/lint/md.go` — `markTagDirectives`, applied to the source before `md.Convert`.
 - `internal/lint/ast.go` — the tag consumed in `lintHTMLTokens` before element bookkeeping.
-- `internal/lint/walk.go` — `walker.rawTok` and `walker.raw()`, the source text captured before `Token` reuses the buffer `Raw` points into.
-- `internal/core/file_test.go` — `TestNormalizeDirective`; `internal/lint/md_directive_test.go`.
+- `internal/lint/walk.go` — `walker.rawTok` and `walker.raw()`, the source text captured before `Token` reuses the buffer `Raw` points into; `directiveIndex`, used by `walker.commentAt`.
+- `internal/core/file_test.go` — `TestNormalizeDirective`; `internal/lint/md_directive_test.go` — `TestMarkTagDirectives`, `TestDirectiveIndex`.
+- `testdata/e2e/comments.yaml` — the `tag-*` cases: Markdown and MDX with and without blank lines, and a code-comment control.
 
 ### A backticked span and a fenced block are masked in a code comment
 
@@ -139,8 +132,17 @@ makes the comment an annotation rather than documentation, so those words stay
 prose. A package comment is covered in the same way, with the name in its second
 position after the word `Package`.
 
-- `internal/lint/code.go` — `maskDocOpener`, `docOpener`, `packageOpener`, `runNames`, `declares`, `declarationBlock`, `namedInAny`, `namedIn`, `commentEnd`, `mask`, `blockSlack`.
-- `internal/lint/docopener_test.go`.
+The mask applies only in a language whose convention it is: Go and the C family
+(`Language.OpensWithName` on Go, C, C++ and Rust). Elsewhere a comment's first
+word is prose, because a JavaScript comment above a line that happens to use
+the same word documents nothing by name. Upstream masks a Go doc comment's
+declared name itself (`DocName`, `leadingMask`); the fork's mask goes further,
+to every name in a slash-separated run and to the name after `Package`, and the
+two agree wherever both apply.
+
+- `internal/lint/code.go` — `maskDocOpener`, `docOpener`, `packageOpener`, `runNames`, `declares`, `declarationBlock`, `namedInAny`, `namedIn`, `commentEnd`, `mask`, `blockSlack`; the call gated on `lang.OpensWithName`.
+- `internal/lint/code/lang.go` — `Language.OpensWithName`, set in `go.go`, `c.go`, `cpp.go` and `rs.go`.
+- `internal/lint/docopener_test.go`; `testdata/e2e/lint.yaml` case `doc-opener-by-language`.
 
 ### A Go string literal is its own scope family
 
@@ -155,14 +157,15 @@ Extraction is additive and conditional. The literal queries run only when the
 configuration holds a rule naming the family, so a style that never mentions it
 costs exactly what it did before. Go's two structural strings — an import path
 and a struct tag — are dropped at capture, because a rule asking for prose has
-no way to tell them from the help text beside them. The opening quote's column
-is recorded as a strip rather than as an offset, because only the first line
-pays it: a raw string's later lines begin at the margin.
+no way to tell them from the help text beside them. The opening quote is
+recorded as the first line's strip, the way a comment's opening delimiter is,
+so a raw string's later lines map back through the dedent alone.
 
 - `internal/lint/code/comments.go` — `LiteralScope`, `IsLiteral`, `WithLiterals`, `splitLiterals`.
 - `internal/lint/code/lang.go` — `Language.Literals`, `Language.SkipLiteral`.
 - `internal/lint/code/go.go` — the literal queries and `goStructuralLiteral`.
-- `internal/lint/code/query.go` — the `literal` capture, `trimQuotes`, the family in the scope name, the quote recorded as a strip.
+- `internal/lint/code/query.go` — the `literal` capture, `trimQuotes`, the family in the scope name, the quote as the first line's `opener`.
+- `internal/lint/code/comments.go` — literals kept apart from `coalesce`, `dropDirectives` and the documentation masks, and put back in source order.
 - `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`, `code.WithLiterals` gated on `Manager.HasScope`.
 - `internal/lint/fragment.go` — a literal skipped on the markup path, which would rebuild it under `text`.
 - `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
@@ -191,16 +194,20 @@ A nested file carries glob sections and nothing else. Every key Vale reads
 outside a section decides a whole run, so a nested file holding one is refused
 by name rather than reaching past the directory it describes.
 
+A nested section may carry a condition, `[*.md if .Meta.draft]`, exactly as a
+root one does: the anchored label keeps the condition, and it applies to the
+files beneath the nested file's directory alone.
+
 `--config`, `VALE_CONFIG_PATH` and `--sources` read no nested file: naming a
 configuration means that file rather than a search, so a run pinned to one
 reports the same whatever a checkout holds.
 
 - `internal/core/nested.go` -- `NestedConfigName`, `discoverNested`, `walkDirs`, `anchorLabel`, `loadNested`, `IsDirPath`.
-- `internal/core/ini.go` -- `processSection`, `reservedSections`.
+- `internal/core/ini.go` -- `processSection`, splitting a section's condition off its glob; `reservedSections`.
 - `internal/core/source.go` -- `ReadPipeline` taking the run's inputs, `wantsNested`.
 - `internal/core/config.go` -- `Config.NestedFiles`, `CLIFlags.NoNested`.
 - `internal/lint/cache.go` -- `--no-nested` in the salt; a nested file is a configuration file, so the file list already covers it.
-- `internal/core/nested_test.go`; `testdata/e2e/config.yaml` cases `nested-carves-out-a-subtree`, `nested-deeper-wins`, `nested-disabled`, `nested-rejects-a-run-wide-key`.
+- `internal/core/nested_test.go`; `testdata/e2e/config.yaml` cases `nested-carves-out-a-subtree`, `nested-deeper-wins`, `nested-disabled`, `nested-rejects-a-run-wide-key`; `testdata/e2e/conditional-sections.yaml` case `in a nested configuration`.
 
 ### A shell script is parsed as code
 
@@ -208,7 +215,7 @@ reports the same whatever a checkout holds.
 comments are prose.
 
 - `internal/core/format.go`, `internal/lint/code/lang.go`, `internal/lint/code/sh.go`.
-- `internal/lint/code/sh_test.go`.
+- `internal/lint/code/sh_test.go`; `testdata/e2e/lint.yaml` case `shell-script-comments`.
 
 ### A build file is parsed as code, matched by name where it has no extension
 
@@ -218,14 +225,13 @@ never reached one. `Makefile`, `makefile` and `GNUmakefile` are matched by name;
 two share a comment syntax with and which recovers across a rule header it
 cannot read, so a comment below one is captured exactly as a comment above it is.
 
-A file matched by name has no extension of its own, so `CodeExt` supplies the
-normed one to whatever needs to name a language.
+A file matched by name has no extension of its own. Upstream's `languageFor`
+falls back from the file's own extension to the normed one `FormatFromExt`
+resolved, which is how such a file reaches its grammar.
 
 - `internal/core/format.go` — `FormatByFilename`, consulted from `FormatFromExt` only where the configured `[formats]` mapping has nothing for the path, so a project naming such a file itself still decides what it is read as.
-- `internal/core/file.go` — `File.CodeExt`.
 - `internal/lint/code/mk.go`, `internal/lint/code/lang.go`.
-- `internal/lint/code.go` and `internal/lint/fragment.go` — `GetLanguageFromExt(f.CodeExt())` rather than `f.RealExt`.
-- `internal/core/format_test.go` — `TestFormatFromExtNamesABuildFile`.
+- `internal/core/format_test.go` — `TestFormatFromExtNamesABuildFile`; `testdata/e2e/lint.yaml` case `build-file-comments`.
 
 ## Performance
 
@@ -258,14 +264,15 @@ external stylesheet, and AsciiDoc, reStructuredText and Typst are converted by a
 separate program whose own include handling decides what it reads — so a sound
 key would have to name files Vale never sees. Only a complete answer is stored:
 a run that failed part way through would otherwise hide the rest of a file's
-alerts for as long as the entry lives. A cache that cannot be opened is reported
-and then done without.
+alerts for as long as the entry lives. A file the cache cannot read is linted
+the way an uncached run lints it and stores nothing. A cache that cannot be
+opened is reported and then done without.
 
 - `internal/cache/cache.go` — the store: `Open`, `Key`, `Get`, `Put`, `Clean`, `Size`, `Dir`, `trim`, `markUsed`.
 - `internal/lint/cache.go` — the policy: `EnableCache`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`.
 - `internal/lint/lint.go` — `Linter.cache`, and the lookup and store around `lintFile`.
 - `cmd/vale/cache.go`, `cmd/vale/command.go`, `cmd/vale/flag.go`, `cmd/vale/main.go`, `internal/core/config.go`.
-- `internal/cache/cache_test.go`, `internal/lint/cache_test.go`.
+- `internal/cache/cache_test.go`, `internal/lint/cache_test.go` (`TestEveryFlagIsClassified` holds every CLI flag to a decision about the salt).
 - `internal/e2e/e2e_test.go` — every scenario runs with `--no-cache`, so a case reports what it was given rather than what an earlier build reported for the same fixture.
 
 ### Every input path goes through one worker pool
@@ -307,15 +314,6 @@ never to changing an answer.
 - `internal/check/capitalization.go`, `internal/check/variables.go`.
 - `internal/check/vocab_test.go`, `internal/check/variables_test.go`.
 
-### The spelling exception pattern is compiled once
-
-Compiling inside the loop that gathers exceptions rebuilt the alternation from
-every term collected so far, making the cost quadratic in the size of the
-vocabulary and throwing away all but the last result. A 1,000-term vocabulary
-spent over three seconds there before a single file was read.
-
-- `internal/check/spelling.go` — the compile moved after the loop in `addExceptions`.
-
 ### A built-in rule the configuration disables everywhere is not built
 
 The built-in rules answer to `Vale.Rule = NO` the same way a style's do, and
@@ -330,6 +328,17 @@ as one would skip a rule the run goes on to ask for.
 
 - `internal/check/manager.go` — the gates in `loadDefaultRules`, `addTerms` and `addAvoid`, and `sectionVocabRule` inside `enabledSomewhere`.
 - `internal/check/enabled_test.go` — `TestDisabledBuiltinRuleIsNotCompiled`, `TestEnabledBuiltinRulesAreCompiled`, `TestDisabledVocabRuleIsNotCompiled`, `TestSectionVocabRuleIsCompiled`.
+
+## Absorbed by upstream
+
+Two fork changes are upstream's own now, and the fork carries neither.
+
+- An accepted phrase matching across any whitespace: upstream's `termPattern`
+  turns the spacing of every vocabulary term into `\s+`, for the exception
+  list and the phrase list alike, and since v3.25.1 a rule's own tokens match
+  across a line wrap too.
+- The spelling exception pattern compiled once per vocabulary rather than once
+  per term: upstream since v3.25.1.
 
 ## Divergences from upstream's own fixtures
 
@@ -354,3 +363,117 @@ before. Neither is a fork feature, and neither is a fault in the prose:
   was, so a rejected phrase matches across the line a writer wrapped it on.
 - The rewritten spelling engine does not accept an acronym's plural -- `POSTs`
   -- on its own. A vocabulary that wants one lists it.
+
+Upstream v3.23.0 to v3.25.1 move alerts a consumer compares line by line. None
+is a fork feature:
+
+- A space in an `existence` token or a `substitution` key matches a line break,
+  so a wrapped phrase is reported where it was missed before.
+- An alert in a comment is placed by what extraction took off its line, so its
+  column can move on prose that did not change.
+- A comment addressed to a tool -- `//go:`, `//nolint`, `# noqa` -- is dropped
+  before it is read, and a documentation convention's tags and links (Javadoc,
+  JSDoc, rustdoc, a Go doc comment's own name) are masked.
+- A spelling alert says when a word is a casing mistake or looks like code, so
+  its message text changes, and the default dictionary accepts common technical
+  vocabulary it reported before.
+- A document that cannot be read or parsed is reported after the rest, and the
+  run goes on.
+
+## Releases
+
+A fork release is tagged `v<upstream base>-fza.<N>`: `v3.25.1-fza.1`,
+`v3.25.1-fza.2`, then `v3.26.0-fza.1` once the fork sits on the next upstream
+release. `N` restarts at 1 on every new base, so the base a release carries is
+read off its tag alone. Every fork version contains `fza`, which is how a
+consumer tells this build from upstream's.
+
+GoReleaser refuses a tag that is not a semantic version, which rules out a
+literal `.fza.N` appended to a stable base (`v3.25.1.fza.1`). The `-fza.N` form
+is a prerelease in semver terms, so it sorts below the plain upstream version;
+the release configuration marks it a full release regardless.
+
+Rejected:
+
+- `v3.25.1-0.fza.N`: keeps the literal `.fza.N` text at the cost of a
+  meaningless `-0.` component, and gains nothing over `-fza.N`.
+- `v3.25.1+fza.N`: semver ignores build metadata in precedence, so every fork
+  release on one base compares equal to upstream's and to each other, and `+`
+  needs escaping in every download URL.
+
+### Where a release is built
+
+A fork tag is released by `.github/workflows/release-fza.yml`, which runs only
+for a tag matching `v*-fza.*`, against `.goreleaser.fza.yml`. It builds macOS
+and Linux on amd64 and arm64 inside the cross-compiling image upstream's release
+already uses (cgo parsers need its osxcross toolchain), publishes the GitHub
+release, and writes the cask `vale` into `fza/homebrew-tap`:
+
+```sh
+brew install fza/tap/vale
+```
+
+The release owner and the cask homepage come from `GITHUB_REPOSITORY_OWNER`.
+`skip_upload` comes from the Actions variable `HOMEBREW_CASK_SKIP_UPLOAD`, set
+to `false` on the fork, since every fork tag is a semver prerelease and `auto`
+would skip it. `HOMEBREW_TAP_TOKEN` is a fine-grained token with contents write
+on the tap alone. A quarantine `install_steps` hook makes the unsigned binary
+runnable on macOS.
+
+Upstream's `main.yml` skips its GoReleaser and docs steps for a tag containing
+`-fza.`, so a fork release starts no Chocolatey build and no vale.sh dispatch.
+
+Rejected:
+
+- Switching upstream's release workflow off in the fork's Actions settings:
+  touches no upstream file, but the switch lives outside the repository, a fresh
+  fork forgets it, and it also stops upstream's README lint.
+- A cask entry inside upstream's `.goreleaser.yml`: one configuration, but the
+  fork then edits upstream's most-changed release files and must skip
+  Chocolatey and Windows builds it has no use for.
+
+Accepted cost: the upstream base tag pushed to the fork for the changelog still
+runs upstream's release job there, which fails at Chocolatey and publishes
+nothing.
+
+## Branches
+
+Every fork change lives on its own branch: `feat/<name>` for a feature or a
+performance change, `fix/<name>` for a correction. A branch starts at
+`upstream/v3`, or at the one branch it builds on, and holds that change alone.
+`fza` is `upstream/v3` with every change branch merged into it, one merge
+commit per branch. The release branch is the branch upstream develops on,
+`v3`: it is reset to `upstream/v3` and `fza` is merged into it, so it points
+where `fza` does, stays the fork's default branch, and carries every release
+tag. The release branch follows upstream's name, as the `fza/sdd` fork's
+`main` does.
+
+A new upstream release is taken by rebasing each change branch onto it, dropping
+a commit upstream has since made redundant, and rebuilding `fza` from upstream
+by merging the branches again. A conflict between two fork changes is resolved
+in the merge that brings the second one in.
+
+A branch cut from upstream lifts out as an upstream pull request as it stands,
+and `git log --first-parent upstream/v3..fza` lists the fork's changes one merge
+per line.
+
+Rejected:
+
+- Branches stacked on the `fza` tip and fast-forwarded into it: a linear `fza`,
+  but each branch then carries every change before it, so none lifts out without
+  a rebase, and rebasing `fza` leaves every branch pointing at commits it no
+  longer contains.
+- Branches stacked on `fza` and merged: shows each change's boundary, with the
+  same stacking cost and merge commits that resolve nothing.
+- A single linear `fza` with no change branches: separable commit by commit, but
+  a change spanning several commits has no name, and nothing marks where it
+  begins and ends.
+- A separate `main` release branch with `v3` mirroring upstream: shows plain
+  upstream on the fork, but adds a branch to keep in step and departs from
+  naming the release branch after upstream's.
+- Merging each upstream release into `fza`: never rewrites published history,
+  but interleaves upstream merges with fork work and ties every change to the
+  resolutions around it.
+
+Accepted cost: every upstream update rewrites the change branches, `fza` and the
+release branch, so each is force-pushed to the fork remote.
