@@ -2415,3 +2415,33 @@ cases:
     want: |
       run.bash:1:3:T.Tok:'Zqxify' found
       run.sh:2:3:T.Tok:'Zqxify' found
+
+  - name: build-file-comments
+    about: "a build file is matched by its name where it carries no extension
+      and by `.mk` where it does, and only its comments are prose"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Tok = YES
+      styles/T/Tok.yml: |
+        extends: existence
+        message: "'%s' found"
+        level: error
+        tokens:
+          - Zqxify
+      Makefile: |
+        # Zqxify the build.
+        all:
+        	echo Zqxify
+      rules.mk: |
+        # Zqxify the rules.
+        check:
+        	echo Zqxify
+    args: Makefile rules.mk
+    exit: 1
+    want: |
+      Makefile:1:3:T.Tok:'Zqxify' found
+      rules.mk:1:3:T.Tok:'Zqxify' found
