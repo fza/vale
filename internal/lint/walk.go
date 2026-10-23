@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"index/suffixarray"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -41,6 +42,10 @@ type walker struct {
 
 	idx int
 	z   *html.Tokenizer
+
+	// rawTok is the source text of the token walk last returned, captured
+	// before Token reuses the buffer Raw points into.
+	rawTok string
 
 	// index finds text in the context without scanning it: a suffix array
 	// over the bytes as they were before any masking, and, per text asked
@@ -655,9 +660,13 @@ func (w *walker) locate(text string) int {
 // commentAt returns where the comment's text begins in the source, or -1 if
 // it cannot be found -- a format whose comment syntax rewrites the text, or a
 // directive quoted earlier in a way the search cannot tell apart.
-func (w *walker) commentAt(txt string) int {
+//
+// It also reports whether it masked the directive out of the context itself,
+// which it does for one written as a tag: the comment's text is not in the
+// source, and masking it word by word would consume words of the prose.
+func (w *walker) commentAt(txt string) (int, bool) {
 	if txt == "" {
-		return -1
+		return -1, false
 	}
 
 	// The search runs from the last comment, not from the block cursor: a
@@ -665,18 +674,56 @@ func (w *walker) commentAt(txt string) int {
 	// rst2html does with a promoted document title.
 	ctx := w.getCtx()
 	if w.cmtCursor > len(ctx) {
-		return -1
+		return -1, false
 	}
 
-	i := strings.Index(ctx[w.cmtCursor:], txt)
+	i, n := directiveIndex(ctx[w.cmtCursor:], txt)
 	if i < 0 {
-		return -1
+		return -1, false
 	}
 
 	off := w.cmtCursor + i
-	w.cmtCursor = off + len(txt)
+	w.cmtCursor = off + n
 
-	return off
+	if ctx[off:off+n] == txt {
+		return off, false
+	}
+	maskAt(w.context, off, ctx[off:off+n], '@')
+	return off, true
+}
+
+// valeTagSpanRE finds the tag form of a directive anywhere in a source.
+var valeTagSpanRE = regexp.MustCompile(`</?\s*vale\s+[^<>\n]*?>`)
+
+// directiveIndex returns where the directive txt is written in src, and how
+// long it is there, or -1. A directive written as a tag reaches the walker
+// rewritten into the comment form, so `</vale off>` arrives as `vale on`, a
+// text the source does not hold; it is found by the tag it was read from.
+// Without that position the region the opening directive started is never
+// closed and suppresses every alert to the end of the file.
+func directiveIndex(src, txt string) (int, int) {
+	i := strings.Index(src, txt)
+
+	for from := 0; from < len(src); {
+		span := valeTagSpanRE.FindStringIndex(src[from:])
+		if span == nil {
+			break
+		}
+		begin, end := from+span[0], from+span[1]
+		if i >= 0 && begin > i {
+			break
+		}
+		directive, ok := core.NormalizeDirective(src[begin:end])
+		if ok && directive == txt {
+			return begin, end - begin
+		}
+		from = end
+	}
+
+	if i < 0 {
+		return -1, 0
+	}
+	return i, len(txt)
 }
 
 // mapRun records that the run of text at `at` in the current block came from
@@ -712,8 +759,17 @@ func (w *walker) sourceOffset(i int) int {
 // inline markup is text the rules should see, not a separator (#1197).
 func (w *walker) walk() (html.TokenType, html.Token, string) {
 	tokt := w.z.Next()
+	// Raw is captured before Token, which reuses the buffer it points into.
+	w.rawTok = string(w.z.Raw())
 	tok := w.z.Token()
 	return tokt, tok, html.UnescapeString(strings.Trim(tok.Data, " \t\n\r\f\v"))
+}
+
+// raw is the source text of the token walk just returned. A directive written as
+// a tag is read from here rather than from the token, because a tokenizer
+// lowercases an attribute name and drops the ones on a closing tag.
+func (w *walker) raw() string {
+	return w.rawTok
 }
 
 func (w *walker) replaceToks(tok html.Token) {
