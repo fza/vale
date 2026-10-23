@@ -101,6 +101,8 @@ func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 	// from are hashed here. Resolution drops what it has no field for -- a
 	// section that names no styles, checks or levels leaves no trace of itself
 	// -- so the files answer for whatever the fields do not.
+	// A nested file is recorded as a configuration file, so hashing the list
+	// covers it; naming them again here would double-count rather than add.
 	sources := append([]string{}, cfg.ConfigFiles...)
 	if cfg.Flags.Sources != "" {
 		// `--sources` names files without recording them as configuration
@@ -121,6 +123,7 @@ func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 	// how alerts are printed or feeds a field the marshalled configuration
 	// already carries, which TestEveryFlagIsClassified holds to.
 	fmt.Fprintf(h, "simple %t\n", cfg.Flags.Simple)
+	fmt.Fprintf(h, "nested %t\n", cfg.Flags.NoNested)
 	fmt.Fprintf(h, "filter %s\n", cfg.Flags.Filter)
 	if system.FileExists(cfg.Flags.Filter) {
 		body, readErr := os.ReadFile(cfg.Flags.Filter)
