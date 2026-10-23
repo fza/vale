@@ -15,8 +15,9 @@ func Go() *Language {
 		Padding: cStyle,
 		// A doc comment opens with the name it documents and links to
 		// others in brackets; a `//go:` line is a directive.
-		Directive: goDirective,
-		Doc:       GoDoc,
-		DocName:   goDocName,
+		Directive:     goDirective,
+		Doc:           GoDoc,
+		DocName:       goDocName,
+		OpensWithName: true,
 	}
 }
