@@ -353,12 +353,13 @@ Two fork changes are upstream's own now, and the fork carries neither.
 
 ## Divergences from upstream's own fixtures
 
-One upstream expectation states a behaviour this fork deliberately replaces, so
-its test data says what this fork does.
+Upstream expectations that meet a behaviour this fork deliberately adds or
+replaces, and what the fork's test data says instead.
 
 | Case | Upstream | This fork |
 |---|---|---|
 | `testdata/e2e/misc.yaml`, `vocab-multiple` | Two vocabularies spelling one token differently: the later one wins, and the earlier spelling is reported. | Both spellings are accepted, and neither is reported. |
+| `testdata/e2e/config-flags.yaml`, `glob`, `glob-negated`, `glob-negated-multi` | `fixtures/formats` is linted whole, and the `.vale.ini` files in `adoc/`, `rst/` and `subdir3/` are fixtures of their own that nothing reads. | Those files are nested configurations, and `adoc/.vale.ini` holds a run-wide `[asciidoctor]` section, which a nested file is refused for. The cases run with `--no-nested`, which reads the tree the way upstream does. |
 
 ## What proves it survives
 
