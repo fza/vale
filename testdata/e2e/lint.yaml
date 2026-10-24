@@ -2479,3 +2479,79 @@ cases:
     want: |
       Makefile:1:3:T.Tok:'Zqxify' found
       rules.mk:1:3:T.Tok:'Zqxify' found
+
+  - name: code-span-placeholder
+    about: "A code span in a source comment reads as a run no rule crosses and
+      no rule counts as a word, as it does in Markdown: Repetition and a
+      phrase never join the words on either side of it, a comment's word count
+      leaves it out, and an alert after it keeps its column. A comment is never
+      split into sentences, so a sentence-scoped rule does not reach one."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale, Probe
+      styles/Probe/Phrase.yml: |
+        extends: existence
+        message: "Phrase '%s' crossed a code span."
+        level: error
+        tokens:
+          - call answers
+      styles/Probe/Words.yml: |
+        extends: occurrence
+        message: "A code span counted as a word."
+        scope: comment
+        level: error
+        max: 21
+        token: '\b(\w+)\b'
+      probe.go: |
+        package probe
+
+        // It reads the `config` the daemon writes.
+        // Open the call `Open` answers there.
+        // Run it once more `go vet ./...` then stop.
+        // Keep the `zzqxé` valuue here.
+        func Probe() {}
+      probe.c: |
+        /*
+         * It reads the `config` the daemon writes.
+         * Open the call `Open` answers there.
+         * Run it once more `go vet ./...` then stop.
+         * Keep the `zzqxé` valuue here.
+         */
+        int probe(void);
+      probe.cpp: |
+        // It reads the `config` the daemon writes.
+        // Open the call `Open` answers there.
+        // Run it once more `go vet ./...` then stop.
+        // Keep the `zzqxé` valuue here.
+        int probe();
+      probe.rs: |
+        // It reads the `config` the daemon writes.
+        // Open the call `Open` answers there.
+        // Run it once more `go vet ./...` then stop.
+        // Keep the `zzqxé` valuue here.
+        fn probe() {}
+      probe.py: |
+        # It reads the `config` the daemon writes.
+        # Open the call `Open` answers there.
+        # Run it once more `go vet ./...` then stop.
+        # Keep the `zzqxé` valuue here.
+        def probe():
+            pass
+      probe.md: |
+        It reads the `config` the daemon writes.
+        Open the call `Open` answers there.
+        Run it once more `go vet ./...` then stop.
+        Keep the `zzqxé` valuue here.
+    args: --output=line --no-exit probe.c probe.cpp probe.go probe.md probe.py probe.rs
+    exit: 0
+    want: |
+      probe.c:5:21:Vale.Spelling:Did you really mean 'valuue'?
+      probe.cpp:4:21:Vale.Spelling:Did you really mean 'valuue'?
+      probe.go:6:21:Vale.Spelling:Did you really mean 'valuue'?
+      probe.md:4:18:Vale.Spelling:Did you really mean 'valuue'?
+      probe.py:4:20:Vale.Spelling:Did you really mean 'valuue'?
+      probe.rs:4:21:Vale.Spelling:Did you really mean 'valuue'?
