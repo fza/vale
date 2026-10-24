@@ -2,6 +2,7 @@ package lint
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 )
@@ -54,19 +55,20 @@ func TestMaskCode(t *testing.T) {
 		want string
 	}{
 		{"no backticks passes through", "Plain prose here.", "Plain prose here."},
-		{"a span becomes spaces of its own width", "See `worktreePath` first.", "See                first."},
-		{"two spans on one line", "`a` and `bb`.", "    and     ."},
+		{"a span becomes a mask of its own width", "See `worktreePath` first.", "See ************** first."},
+		{"a span of several bytes per character keeps its character count", "Keep `naïve` here.", "Keep ******* here."},
+		{"two spans on one line", "`a` and `bb`.", "*** and ****."},
 		{"an unclosed backtick swallows nothing", "A ` lone tick.", "A ` lone tick."},
 		{"a span never crosses a line", "open ` here\nand ` there", "open ` here\nand ` there"},
 		{
-			"a fence is blanked and keeps its line breaks",
+			"a fence is masked and keeps its line breaks",
 			"Shape:\n\n```\nfoo(bar)\n```\n\nDone.",
-			"Shape:\n\n   \n        \n   \n\nDone.",
+			"Shape:\n\n***\n********\n***\n\nDone.",
 		},
 		{
-			"a span inside a fence is blanked once",
+			"a span inside a fence is masked once",
 			"```\nsee `x` here\n```",
-			"   \n            \n   ",
+			"***\n************\n***",
 		},
 		{
 			"an unclosed fence swallows nothing",
@@ -79,10 +81,10 @@ func TestMaskCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := maskCode(tt.text)
 			if got != tt.want {
-				t.Errorf("notation should be blanked in place: got %q, want %q", got, tt.want)
+				t.Errorf("notation should be masked in place: got %q, want %q", got, tt.want)
 			}
-			if len(got) != len(tt.text) {
-				t.Errorf("byte length has to survive, or an alert maps onto the wrong column")
+			if utf8.RuneCountInString(got) != utf8.RuneCountInString(tt.text) {
+				t.Errorf("character count has to survive, or an alert maps onto the wrong column")
 			}
 		})
 	}
