@@ -18,19 +18,19 @@ func TestMaskDocOpener(t *testing.T) {
 			name:    "the declaration below names it",
 			content: "// stagingDir makes a directory.\nfunc stagingDir() {}\n",
 			comment: code.Comment{Text: "stagingDir makes a directory.", Source: "// stagingDir makes a directory.", Line: 1},
-			want:    "           makes a directory.",
+			want:    "********** makes a directory.",
 		},
 		{
 			name:    "a run of names the block below declares",
 			content: "// Stdin / Stdout / Stderr may each be nil.\nStdin  io.Reader\nStdout io.Writer\nStderr io.Writer\n",
 			comment: code.Comment{Text: "Stdin / Stdout / Stderr may each be nil.", Source: "// Stdin / Stdout / Stderr may each be nil.", Line: 1},
-			want:    "      /        /        may each be nil.",
+			want:    "***** / ****** / ****** may each be nil.",
 		},
 		{
 			name:    "a run whose later name nothing declares keeps that name",
 			content: "// Stdin / Stdround may each be nil.\nStdin io.Reader\n",
 			comment: code.Comment{Text: "Stdin / Stdround may each be nil.", Source: "// Stdin / Stdround may each be nil.", Line: 1},
-			want:    "      / Stdround may each be nil.",
+			want:    "***** / Stdround may each be nil.",
 		},
 		{
 			name:    "a run whose first name nothing declares masks nothing",
@@ -42,13 +42,13 @@ func TestMaskDocOpener(t *testing.T) {
 			name:    "a run of interface methods on their own lines",
 			content: "// DBDump / DBPull streams it down.\nDBDump(w io.Writer) error\nDBPull(w io.Writer) error\n",
 			comment: code.Comment{Text: "DBDump / DBPull streams it down.", Source: "// DBDump / DBPull streams it down.", Line: 1},
-			want:    "       /        streams it down.",
+			want:    "****** / ****** streams it down.",
 		},
 		{
 			name:    "a slashed run after the opening stays prose",
 			content: "// Stdin carries and/or holds it.\nStdin io.Reader\n",
 			comment: code.Comment{Text: "Stdin carries and/or holds it.", Source: "// Stdin carries and/or holds it.", Line: 1},
-			want:    "      carries and/or holds it.",
+			want:    "***** carries and/or holds it.",
 		},
 		{
 			name:    "a misspelled opener still reports",
@@ -60,7 +60,7 @@ func TestMaskDocOpener(t *testing.T) {
 			name:    "a type declaration counts",
 			content: "// Registry holds every feat.\ntype Registry struct{}\n",
 			comment: code.Comment{Text: "Registry holds every feat.", Source: "// Registry holds every feat.", Line: 1},
-			want:    "         holds every feat.",
+			want:    "******** holds every feat.",
 		},
 		{
 			name:    "a longer name is not a match",
@@ -72,7 +72,7 @@ func TestMaskDocOpener(t *testing.T) {
 			name:    "a blank first line is skipped",
 			content: "//\n// stagingDir makes a directory.\nfunc stagingDir() {}\n",
 			comment: code.Comment{Text: "\nstagingDir makes a directory.", Source: "//\n// stagingDir makes a directory.", Line: 1},
-			want:    "\n           makes a directory.",
+			want:    "\n********** makes a directory.",
 		},
 		{
 			name:    "prose opening a comment is left alone",
@@ -98,7 +98,7 @@ func TestMaskDocOpener(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := maskDocOpener(strings.Split(tt.content, "\n"), tt.comment)
 			if got != tt.want {
-				t.Errorf("the opener should be blanked only when the declaration names it: got %q, want %q", got, tt.want)
+				t.Errorf("the opener should be masked only when the declaration names it: got %q, want %q", got, tt.want)
 			}
 			if len(got) != len(tt.comment.Text) {
 				t.Error("byte length has to survive, or an alert maps onto the wrong column")
@@ -120,7 +120,7 @@ func TestMaskPackageOpener(t *testing.T) {
 			name:    "the package clause below names it",
 			content: "// Package engine implements the backend.\npackage engine\n",
 			comment: code.Comment{Text: "Package engine implements the backend.", Source: "// Package engine implements the backend.", Line: 1},
-			want:    "Package        implements the backend.",
+			want:    "Package ****** implements the backend.",
 		},
 		{
 			name:    "a different name still reports",
@@ -140,7 +140,7 @@ func TestMaskPackageOpener(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := maskDocOpener(strings.Split(tt.content, "\n"), tt.comment)
 			if got != tt.want {
-				t.Errorf("the package name should be blanked only when the clause names it: got %q, want %q", got, tt.want)
+				t.Errorf("the package name should be masked only when the clause names it: got %q, want %q", got, tt.want)
 			}
 			if len(got) != len(tt.comment.Text) {
 				t.Error("byte length has to survive, or an alert maps onto the wrong column")
