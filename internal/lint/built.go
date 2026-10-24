@@ -93,9 +93,16 @@ const adocConverterJS = `class ValeHtml5Converter {
 }
 `
 
-// xsltArgs are the parameters Vale gives xsltproc: no extensions, and no
-// generated table of contents, whose text is in no source line.
+// xsltArgs are the arguments Vale gives xsltproc. A stylesheet is project
+// configuration that runs as a program, so it is contained the way the
+// AsciiDoc converter's safe mode contains a document: it can't fetch over the
+// network, write a file, or create a directory. Its parameters turn off
+// extensions and the generated table of contents, whose text is in no source
+// line.
 var xsltArgs = []string{
+	"--nonet",
+	"--nowrite",
+	"--nomkdir",
 	"--stringparam",
 	"use.extensions",
 	"0",

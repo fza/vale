@@ -1742,6 +1742,50 @@ cases:
       spaced.md:4:10:T.Dash:dash
       spaced.md:4:20:T.Dash:dash
 
+  - name: xml-stylesheet-is-contained
+    about: "a `Transform` stylesheet is project configuration that runs as a
+      program, so xsltproc runs it with no network, no file writes, and no
+      directory creation, as the AsciiDoc converter runs in safe mode. A
+      stylesheet that writes a file is refused and the run reports it."
+    requires: xsltproc
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.xml]
+        BasedOnStyles = T
+        Transform = write.xsl
+      styles/T/W.yml: |
+        extends: existence
+        message: "'%s'"
+        level: error
+        tokens:
+          - very
+      write.xsl: |
+        <?xml version="1.0"?>
+        <xsl:stylesheet version="1.0"
+            xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+            xmlns:exsl="http://exslt.org/common"
+            extension-element-prefixes="exsl">
+          <xsl:output method="html"/>
+          <xsl:template match="/doc">
+            <exsl:document href="side-effect.txt" method="text">written</exsl:document>
+            <html><body>
+              <xsl:for-each select="para"><p><xsl:value-of select="."/></p></xsl:for-each>
+            </body></html>
+          </xsl:template>
+        </xsl:stylesheet>
+      doc.xml: |
+        <?xml version="1.0"?>
+        <doc><para>This is very good.</para></doc>
+    args: doc.xml
+    exit: 2
+    contains: |
+      E100:runtime error: file
+    absent:
+      - T.W
+
   - name: dita-token-ignores
     about: "#407 -- ignore patterns apply to DITA. The toolkit reads its
       input from disk, so the patterns are applied to a copy written
