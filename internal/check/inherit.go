@@ -2,7 +2,6 @@ package check
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -89,7 +88,7 @@ func (mgr *Manager) flatten(generic baseCheck, path string, seen []string) (base
 		return nil, core.NewE201FromPosition(err.Error(), path, 1)
 	}
 
-	data, err := os.ReadFile(parentPath)
+	data, err := system.ReadFile(parentPath)
 	if err != nil {
 		return nil, core.NewE201FromPosition(err.Error(), parentPath, 1)
 	}

@@ -127,6 +127,7 @@ Most tools see text. Vale sees a document.
 | **Linux** | `sudo snap install vale` &nbsp;·&nbsp; `sudo pacman -S vale` &nbsp;·&nbsp; `sudo apt install vale` |
 | **Docker** | `docker pull jdkato/vale` |
 | **Go** | `go install github.com/vale-cli/vale/v3/cmd/vale@latest` |
+| **Browser** | `vale_<version>_wasm.tar.gz` from a release, loaded as a [WebAssembly module](https://docs.vale.sh/topics/wasm) |
 
 Every release also ships [prebuilt binaries](https://github.com/vale-cli/vale/releases) for each platform. Scoop, MacPorts, FreeBSD ports, conda-forge, the APT archive, and the rest are on the [installation page](https://docs.vale.sh/topics/installation).
 

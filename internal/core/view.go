@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/vale-cli/vale/v3/internal/nlp"
+	"github.com/vale-cli/vale/v3/internal/system"
 	"github.com/vale-cli/vale/v3/internal/textfsm"
 )
 
@@ -178,7 +178,7 @@ type ScopedValues struct {
 func NewView(path string) (*View, error) {
 	var view View
 
-	data, err := os.ReadFile(path)
+	data, err := system.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

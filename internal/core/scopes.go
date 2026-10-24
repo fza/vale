@@ -2,13 +2,14 @@ package core
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // reservedScopes are the names Vale gives its own scopes and terms. A named
@@ -40,18 +41,21 @@ func (c *Config) LoadScopes() error {
 
 	for _, root := range c.SearchPaths() {
 		dir := filepath.Join(root, ScopeDir)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() || (!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
+		var files []string
+		for _, ext := range []string{"*.yml", "*.yaml"} {
+			found, err := system.Glob(filepath.Join(dir, ext))
+			if err != nil {
 				continue
 			}
-			if err = c.loadScopeFile(filepath.Join(dir, name)); err != nil {
+			files = append(files, found...)
+		}
+
+		sort.Strings(files)
+		for _, path := range files {
+			if system.IsDir(path) {
+				continue
+			}
+			if err := c.loadScopeFile(path); err != nil {
 				return err
 			}
 		}
@@ -61,7 +65,7 @@ func (c *Config) LoadScopes() error {
 }
 
 func (c *Config) loadScopeFile(path string) error {
-	b, err := os.ReadFile(path)
+	b, err := system.ReadFile(path)
 	if err != nil {
 		return NewE201FromPosition(err.Error(), path, 1)
 	}

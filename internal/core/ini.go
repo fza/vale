@@ -2,6 +2,7 @@ package core
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -155,7 +156,7 @@ func loadVocabulary(root string, cfg *Config) (*Vocabulary, error) {
 
 // readWordList reads a vocabulary file: one term per line, `# ` a comment.
 func readWordList(path string) ([]string, error) {
-	fd, err := os.Open(path)
+	fd, err := system.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +517,24 @@ func shadowMerge(primary *ini.File, secondary *ini.File) {
 	}
 }
 
+// loadINISource parses an INI source: a path, read from the active
+// filesystem, or the bytes of one. A missing file is empty when the options
+// are Loose, as go-ini reads it.
+func loadINISource(options ini.LoadOptions, source interface{}) (*ini.File, error) {
+	if path, ok := source.(string); ok {
+		b, err := system.ReadFile(path)
+		if err != nil {
+			if options.Loose && errors.Is(err, fs.ErrNotExist) {
+				b = nil
+			} else {
+				return nil, err
+			}
+		}
+		return ini.LoadSources(options, b)
+	}
+	return ini.LoadSources(options, source)
+}
+
 func shadowLoad(source interface{}, others ...interface{}) (*ini.File, error) {
 	options := ini.LoadOptions{
 		AllowShadows:             true,
@@ -524,7 +543,7 @@ func shadowLoad(source interface{}, others ...interface{}) (*ini.File, error) {
 		ChildSectionDelimiter:    noChildSections,
 	}
 
-	primary, err := ini.LoadSources(options, source)
+	primary, err := loadINISource(options, source)
 	if err != nil {
 		return nil, err
 	}
@@ -533,7 +552,7 @@ func shadowLoad(source interface{}, others ...interface{}) (*ini.File, error) {
 	for _, other := range others {
 		var shadow *ini.File
 
-		shadow, err = ini.LoadSources(options, other)
+		shadow, err = loadINISource(options, other)
 		if err != nil {
 			return nil, err
 		}
@@ -585,7 +604,7 @@ func styleSources(sources []string) map[string]string {
 	options := ini.LoadOptions{Loose: true, AllowShadows: true, ChildSectionDelimiter: noChildSections}
 	out := map[string]string{}
 	for _, src := range sources {
-		f, err := ini.LoadSources(options, src)
+		f, err := loadINISource(options, src)
 		if err != nil {
 			continue
 		}

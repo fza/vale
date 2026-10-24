@@ -2,12 +2,13 @@ package nlp
 
 import (
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/jdkato/prose/v3/segment"
 	"github.com/jdkato/prose/v3/tag"
 	"github.com/jdkato/prose/v3/tokenize"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // TaggedWord is a word with an NLP context.
@@ -64,7 +65,7 @@ func RegisterModel(name, path string) error {
 		return nil
 	}
 
-	f, err := os.Open(path)
+	f, err := system.Open(path)
 	if err != nil {
 		return err
 	}

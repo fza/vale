@@ -34,6 +34,15 @@ release:
 build:
 	GOOS=$(os) GOARCH=$(arch) go build ${LDFLAGS} -o bin/$(exe) ./cmd/vale
 
+# The browser build: no CGo, so no tree-sitter, and no external converters.
+# `wasm_exec.js` is the loader that ships with the Go toolchain that built it.
+wasm:
+	GOOS=js GOARCH=wasm go build ${LDFLAGS} -o bin/vale.wasm ./cmd/valew
+	install -m 0644 "$$(go env GOROOT)/lib/wasm/wasm_exec.js" bin/wasm_exec.js
+
+test-wasm: wasm
+	node testdata/wasm/smoke.mjs bin/wasm_exec.js bin/vale.wasm
+
 bench:
 	go test -bench=. -benchmem ./internal/core ./internal/lint ./internal/check
 

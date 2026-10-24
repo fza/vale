@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	rx "github.com/vale-cli/vale/v3/internal/regex"
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // Solution is a potential solution to an alert.
@@ -233,7 +233,7 @@ func compileAction(file string) (*tengo.Compiled, error) {
 		return cached.(*tengo.Compiled), nil
 	}
 
-	source, err := os.ReadFile(file)
+	source, err := system.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}

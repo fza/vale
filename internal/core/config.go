@@ -4,15 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/adrg/xdg"
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/errata-ai/ini"
 
 	"github.com/vale-cli/vale/v3/internal/glob"
@@ -120,7 +117,7 @@ func FindAsset(cfg *Config, path string) string {
 // IgnoreFiles returns a list of all user-defined ignore files.
 func IgnoreFiles(stylesPath string) ([]string, error) {
 	ignore := filepath.Join(stylesPath, IgnoreDir)
-	return doublestar.FilepathGlob(filepath.Join(ignore, "**", "*.txt"))
+	return system.GlobRecursive(ignore, "*.txt")
 }
 
 // getConfigAsset returns the path to a given asset if it exists.
@@ -135,38 +132,6 @@ func getConfigAsset(target string, paths, dirs []string) string {
 		}
 	}
 	return ""
-}
-
-// DefaultConfig returns the path to the default configuration file.
-//
-// We don't create this file automatically because there's no actual notion of
-// a "default" configuration -- it's just a file loation.
-//
-// NOTE: if this file does not exist *and* the user has not specified a
-// project-specific configuration file, Vale raises an error.
-func DefaultConfig() (string, error) {
-	root, err := xdg.ConfigFile("vale/.vale.ini")
-	if err != nil {
-		return "", fmt.Errorf("failed to find default config: %w", err)
-	}
-	return root, nil
-}
-
-// DefaultStylesPath returns the path to the default styles directory.
-//
-// NOTE: the default styles directory is only used if neither the
-// project-specific nor the global configuration file specify a `StylesPath`.
-func DefaultStylesPath() (string, error) {
-	if fromEnv, hasEnv := os.LookupEnv("VALE_STYLES_PATH"); hasEnv {
-		return fromEnv, nil
-	}
-
-	styles, err := xdg.DataFile("vale/styles/config.yml")
-	if err != nil {
-		return "", fmt.Errorf("failed to find default styles: %w", err)
-	}
-
-	return filepath.Dir(styles), nil
 }
 
 // CLIFlags holds the values that are defined at runtime by the user.
@@ -397,7 +362,7 @@ func (c *Config) Cached(key string, build func() any) any {
 
 // AddWordListFile adds vocab terms from a provided file.
 func (c *Config) AddWordListFile(name string, accept bool) error {
-	fd, err := os.Open(name)
+	fd, err := system.Open(name)
 	if err != nil {
 		return err
 	}
@@ -429,7 +394,11 @@ func (c *Config) String() string {
 func GetPackages(src string) ([]string, error) {
 	packages := []string{}
 
-	uCfg, err := ini.Load(src)
+	b, err := system.ReadFile(src)
+	if err != nil {
+		return packages, err
+	}
+	uCfg, err := ini.Load(b)
 	if err != nil {
 		return packages, err
 	}

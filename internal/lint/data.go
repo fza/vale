@@ -8,7 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/vale-cli/vale/v3/internal/core"
-	"github.com/vale-cli/vale/v3/internal/lint/code"
 	"github.com/vale-cli/vale/v3/internal/nlp"
 )
 
@@ -99,15 +98,6 @@ func (l *Linter) lintData(f *core.File) error {
 			}
 			return l.lintScopedValues(f, found)
 		}
-	}
-	return nil
-}
-
-// lintDataComments lints the comments of a data file that has a grammar --
-// YAML or TOML -- and does nothing for one that has no comments to read.
-func (l *Linter) lintDataComments(f *core.File) error {
-	if _, err := code.GetLanguageFromExt(f.RealExt); err == nil {
-		return l.lintCode(f)
 	}
 	return nil
 }

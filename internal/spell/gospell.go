@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,6 +14,8 @@ import (
 
 	"github.com/adrg/strutil"
 	"github.com/adrg/strutil/metrics"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 type wordMatch struct {
@@ -167,7 +168,7 @@ func (s *goSpell) addWordRaw(word string) bool {
 
 // addWordListFile reads in a word list file
 func (s *goSpell) addWordListFile(name string) ([]string, error) {
-	fd, err := os.Open(name)
+	fd, err := system.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1160,12 +1161,12 @@ func (s *goSpell) hasSharp(word string) bool {
 
 // newGoSpell from AFF and DIC Hunspell filenames
 func newGoSpell(affFile, dicFile string) (*goSpell, error) {
-	aff, err := os.Open(affFile)
+	aff, err := system.Open(affFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open aff: %s", err.Error())
 	}
 	defer aff.Close()
-	dic, err := os.Open(dicFile)
+	dic, err := system.Open(dicFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open dic: %s", err.Error())
 	}

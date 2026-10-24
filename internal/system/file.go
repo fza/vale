@@ -1,15 +1,13 @@
 package system
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 )
 
 // FileExists determines if the path given by `filename` exists.
 func FileExists(filename string) bool {
-	_, err := os.Stat(filename)
-	return err == nil
+	return Default.Exists(filename)
 }
 
 // FileNameWithoutExt returns the filename without its extension.

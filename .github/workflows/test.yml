@@ -123,3 +123,25 @@ jobs:
           # Fail rather than skip if a converter above didn't install, so a
           # gap in the toolchain can't pass for coverage.
           VALE_E2E_STRICT: "1"
+
+  # The browser build has no CGo and no external tools, so it is its own
+  # target: build it, then drive its JavaScript API from Node the way a
+  # browser host would.
+  wasm:
+    name: Test (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.7"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build and test the wasm module
+        run: make test-wasm

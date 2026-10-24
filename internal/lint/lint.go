@@ -171,6 +171,22 @@ func (l *Linter) LintString(src string) ([]*core.File, error) {
 	return []*core.File{linted.file}, linted.err
 }
 
+// LintStringAs lints content as the document named virtualName, whose
+// extension says how it is read. It is how a host with no filesystem, such
+// as a browser, lints.
+func (l *Linter) LintStringAs(content, virtualName string) ([]*core.File, error) {
+	l.singleDoc = true
+	defer l.stopExternal()
+
+	file, err := core.NewFileFromContent(content, virtualName, l.Manager.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	linted := l.lintPreparedFile(file)
+	return []*core.File{linted.file}, linted.err
+}
+
 // Lint src according to its format.
 func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	var linted []*core.File
@@ -298,13 +314,18 @@ func (l *Linter) lintFiles(done <-chan core.File, root string) (<-chan lintResul
 // lintFile creates a new `File` from the path `src` and selects a linter based
 // on its format.
 func (l *Linter) lintFile(src string) lintResult {
+	file, err := core.NewFile(src, l.Manager.Config)
+	if err != nil {
+		return lintResult{err: err, path: src}
+	}
+	return l.lintPreparedFile(file)
+}
+
+// lintPreparedFile lints a File already built, from disk or from memory.
+func (l *Linter) lintPreparedFile(file *core.File) lintResult {
 	var err error
 
-	file, err := core.NewFile(src, l.Manager.Config)
-	switch {
-	case err != nil:
-		return lintResult{err: err, path: src}
-	case l.runsNothing(file):
+	if l.runsNothing(file) {
 		// No rule can run here -- `BasedOnStyles =` in a section that
 		// matched, say -- so the file isn't parsed at all.
 		return lintResult{file: file}
@@ -397,7 +418,7 @@ func (l *Linter) lintFile(src string) lintResult {
 		file.MapAlertsToSource()
 	}
 
-	return lintResult{file: file, err: err, path: src}
+	return lintResult{file: file, err: err, path: file.Path}
 }
 
 // runsNothing reports whether no rule can run for f: it bases on no style,

@@ -2,7 +2,6 @@ package check
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -21,14 +20,14 @@ func filter(mgr *Manager) (map[string]Rule, error) {
 
 	if system.FileExists(stringOrPath) {
 		// Case 1: The user has provided a valid path to a filter file.
-		b, err := os.ReadFile(stringOrPath)
+		b, err := system.ReadFile(stringOrPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read filter '%s': %w", stringOrPath, err)
 		}
 		filter = string(b)
 	} else if found := core.FindAsset(mgr.Config, stringOrPath); found != "" {
 		// Case 2: The user has referenced a filter stored on the `StylesPath`.
-		b, err := os.ReadFile(found)
+		b, err := system.ReadFile(found)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read filter '%s': %w", found, err)
 		}

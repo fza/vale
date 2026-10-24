@@ -43,7 +43,8 @@ func walk(filename string, linkDirname string, walkFn filepath.WalkFunc) error {
 	return filepath.Walk(filename, symWalkFunc)
 }
 
-// Walk extends filepath.Walk to also follow symlinks
+// Walk walks the tree at path on the active backend; on the host OS it
+// also follows symlinks.
 func Walk(path string, walkFn filepath.WalkFunc) error {
-	return walk(path, path, walkFn)
+	return Default.Walk(path, walkFn)
 }

@@ -9,6 +9,5 @@ func Mkdir(dir string) error {
 
 // IsDir determines if the path given by `filename` is a directory.
 func IsDir(filename string) bool {
-	fi, err := os.Stat(filename)
-	return err == nil && fi.IsDir()
+	return Default.IsDir(filename)
 }

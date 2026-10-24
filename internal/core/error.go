@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/pterm/pterm"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // An Error is a failure of Vale itself rather than a finding in a document:
@@ -148,7 +150,7 @@ func NewE100(context string, err error) error {
 // NewE201 creates an error about an invalid value in the file at path,
 // placed at the first line finder accepts.
 func NewE201(msg, value, path string, finder errorCondition) error {
-	f, err := os.ReadFile(path)
+	f, err := system.ReadFile(path)
 	if err != nil {
 		return NewE100(filepath.Base(path), errors.New(msg))
 	}
@@ -206,7 +208,7 @@ func NewE201FromKey(cfg *Config, key string, match func(value string) bool, msg 
 		return false
 	}
 	for _, path := range cfg.ConfigFiles {
-		f, err := os.ReadFile(path)
+		f, err := system.ReadFile(path)
 		if err != nil {
 			continue
 		}

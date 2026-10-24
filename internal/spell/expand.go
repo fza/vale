@@ -3,9 +3,10 @@ package spell
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 var defaultConfig = sync.OnceValues(func() (*dictConfig, error) {
@@ -29,7 +30,7 @@ func Expand(word, flags string) ([]string, error) {
 func ExpandWith(path, word, flags string) ([]string, error) {
 	cached, ok := affixFiles.Load(path)
 	if !ok {
-		raw, err := os.ReadFile(path)
+		raw, err := system.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}

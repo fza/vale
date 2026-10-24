@@ -103,7 +103,7 @@ func AffixExpander(cfg *Config, name string) (ExpandFunc, error) {
 
 // readVocabYAML adds the entries of the YAML vocabulary at path to vocab.
 func readVocabYAML(path string, vocab *Vocabulary, cfg *Config) error {
-	src, err := os.ReadFile(path)
+	src, err := system.ReadFile(path)
 	if err != nil {
 		return err
 	}

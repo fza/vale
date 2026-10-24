@@ -124,7 +124,7 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 
 	if base.defaultPath != "" {
 		// load all dictionaries from the given path ...
-		files, err := filepath.Glob(base.defaultPath + "/*.dic")
+		files, err := system.Glob(base.defaultPath + "/*.dic")
 		if err != nil {
 			return &checker, err
 		}
@@ -311,7 +311,7 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	dic, err := os.Open(dicPath)
+	dic, err := system.Open(dicPath)
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	aff, err := os.Open(affPath)
+	aff, err := system.Open(affPath)
 	if err != nil {
 		return err
 	}

@@ -81,6 +81,20 @@ func FromString(src string, cfg *Config, dry bool) (*ini.File, error) {
 	return from(StringSrc, src, cfg, dry)
 }
 
+// LoadConfigFromString returns the configuration an INI document describes,
+// with its assets resolved against the active filesystem. It is the entry
+// point for a host that has no config file on disk, such as a browser.
+func LoadConfigFromString(src string) (*Config, error) {
+	cfg, err := NewConfig(&CLIFlags{})
+	if err != nil {
+		return nil, err
+	}
+	if _, err = FromString(src, cfg, false); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 func validateFlags(cfg *Config) error {
 	if cfg.Flags.Path != "" && !system.FileExists(cfg.Flags.Path) {
 		return NewE100(

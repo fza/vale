@@ -3,7 +3,6 @@ package check
 import (
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -127,7 +126,7 @@ func (mgr *Manager) RuleForAlert(name string) string {
 
 // AddRuleFromFile adds the given rule to the manager.
 func (mgr *Manager) AddRuleFromFile(name, path string) error {
-	content, err := os.ReadFile(path)
+	content, err := system.ReadFile(path)
 	if err != nil {
 		return core.NewE100(path, err)
 	}
@@ -290,7 +289,7 @@ func (mgr *Manager) addStyle(path string) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			data, rerr := os.ReadFile(path)
+			data, rerr := system.ReadFile(path)
 			if rerr != nil {
 				results[i].err = core.NewE201FromPosition(rerr.Error(), path, 1)
 				return
@@ -318,7 +317,7 @@ func (mgr *Manager) addStyle(path string) error {
 }
 
 func (mgr *Manager) addCheckFile(chkName, path string) error {
-	f, err := os.ReadFile(path)
+	f, err := system.ReadFile(path)
 	if err != nil {
 		return core.NewE201FromPosition(err.Error(), path, 1)
 	}

@@ -1,6 +1,11 @@
 env:
   - CGO_ENABLED=1
 
+before:
+  hooks:
+    # The wasm archive carries the loader from the toolchain that built it.
+    - sh -c 'install -m 0644 "$(go env GOROOT)/lib/wasm/wasm_exec.js" bin/wasm_exec.js'
+
 builds:
   - id: vale-darwin-amd64
     main: ./cmd/vale
@@ -91,8 +96,33 @@ builds:
       - -s -w -X main.version={{.Version}}
       - -extldflags=-static
 
+  # The browser build: a WebAssembly module for a JavaScript host, with no
+  # CGo and so no tree-sitter or external converters. It ships beside the
+  # loader that belongs to the Go toolchain that built it (see `before`).
+  - id: vale-wasm
+    main: ./cmd/valew
+    binary: vale
+    goarch:
+      - wasm
+    goos:
+      - js
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
 archives:
-  - format: tar.gz
+  - id: native
+    builds:
+      - vale-darwin-amd64
+      - vale-darwin-arm64
+      - vale-linux-amd64
+      - vale-linux-arm64
+      - vale-windows-amd64
+      - vale-windows-arm64
+    format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
@@ -102,6 +132,15 @@ archives:
       {{- else }}{{- title .Os }}_{{ end }}
       {{- if eq .Arch "amd64" }}64-bit
       {{- else }}{{ .Arch }}{{ end }}
+
+  - id: wasm
+    builds:
+      - vale-wasm
+    format: tar.gz
+    name_template: vale_{{ .Version }}_wasm
+    files:
+      - src: bin/wasm_exec.js
+        dst: wasm_exec.js
 
 # Create the GitHub release as a draft and upload assets to it *before* it's
 # published. A published release is immutable and rejects new assets ("422

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -119,7 +118,8 @@ func (f *File) lineStarts(ctx string) []int {
 	return starts
 }
 
-// NewFile initializes a File.
+// NewFile initializes a File from a path, or from stdin's content when src
+// is not a file.
 func NewFile(src string, config *Config) (*File, error) {
 	var format, ext string
 	var fbytes []byte
@@ -127,7 +127,7 @@ func NewFile(src string, config *Config) (*File, error) {
 	path := src
 
 	if system.FileExists(src) {
-		fbytes, _ = os.ReadFile(src)
+		fbytes, _ = system.ReadFile(src)
 		if config.Flags.InExt != ".txt" {
 			ext, format = FormatFromExt(config.Flags.InExt, config.Formats)
 		} else {
@@ -150,6 +150,19 @@ func NewFile(src string, config *Config) (*File, error) {
 		}
 	}
 
+	return buildFile(path, ext, format, fbytes, lookup, config)
+}
+
+// NewFileFromContent initializes a File from content held in memory, read as
+// the format name's extension says.
+func NewFileFromContent(content, name string, config *Config) (*File, error) {
+	ext, format := FormatFromExt(name, config.Formats)
+	return buildFile(name, ext, format, []byte(content), true, config)
+}
+
+// buildFile resolves the configuration that applies to a document at path
+// and reads its content.
+func buildFile(path, ext, format string, fbytes []byte, lookup bool, config *Config) (*File, error) {
 	filepaths := []string{path}
 	normed := NormalizePath(path, config.Formats)
 
