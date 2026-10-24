@@ -355,8 +355,12 @@ func (l *Linter) lintHTMLTokens(f *core.File, raw []byte, offset int) error { //
 		attr = getAttribute(tok, "href")
 		parentClass = getAttribute(tok, "class")
 
-		if err := l.lintTags(f, walker, tok); err != nil {
-			return err
+		// An attribute's text belongs to the element that holds it: inside
+		// an ignored class, an image's alt text is skipped with the block.
+		if !skipClass && !walker.inClass(skipClasses) {
+			if err := l.lintTags(f, walker, tok); err != nil {
+				return err
+			}
 		}
 
 		walker.replaceToks(tok)

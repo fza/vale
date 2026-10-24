@@ -424,6 +424,17 @@ func (w *walker) unclose(tag string) {
 	}
 }
 
+// inClass reports whether a block container still open carries one of the
+// given classes.
+func (w *walker) inClass(classes []string) bool {
+	for _, o := range w.enclosing {
+		if checkClasses(o.cls, classes) {
+			return true
+		}
+	}
+	return false
+}
+
 // classes returns the classes enclosing the current block, in the order they
 // were opened and without repeats.
 func (w *walker) classes() []string {

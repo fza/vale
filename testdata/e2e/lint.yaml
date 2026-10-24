@@ -1786,6 +1786,73 @@ cases:
     absent:
       - T.W
 
+  - name: ignored-class-covers-alt-text
+    about: "#1219 -- an image's alt text inside an element with an ignored
+      class is skipped with the block, in HTML and in the HTML Asciidoctor
+      makes of a `role`. It was linted whatever enclosed it."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        IgnoredClasses = vale-off
+
+        [*]
+        BasedOnStyles = My
+      styles/My/WordList.yml: |
+        extends: substitution
+        message: "Use '%s' instead of '%s'."
+        level: warning
+        swap:
+          application: app
+      test.html: |
+        <html><body>
+        <p>The application is here.</p>
+        <div class="imageblock vale-off">
+        <div class="content">
+        <img src="icon.svg" alt="The My application menu icon.">
+        </div>
+        </div>
+        <p><img src="icon.svg" alt="An application icon." class="vale-off"></p>
+        <p><img src="icon.svg" alt="The application icon."></p>
+        </body></html>
+    args: --output=line test.html
+    exit: 0
+    want: |
+      test.html:2:8:My.WordList:Use 'app' instead of 'application'.
+      test.html:9:33:My.WordList:Use 'app' instead of 'application'.
+
+  - name: ignored-role-covers-alt-text
+    about: "#1219 -- the same through Asciidoctor, where `role=\"vale-off\"`
+      on an image becomes the class of the block around it"
+    requires: asciidoctor
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+        IgnoredClasses = vale-off
+
+        [*]
+        BasedOnStyles = My
+      styles/My/WordList.yml: |
+        extends: substitution
+        message: "Use '%s' instead of '%s'."
+        level: warning
+        swap:
+          application: app
+      test.adoc: |
+        = Test
+
+        The application is here.
+
+        image::icon.svg["The My application menu icon.", role="vale-off"]
+
+        image::icon.svg["The application icon."]
+    args: --output=line test.adoc
+    exit: 0
+    want: |
+      test.adoc:3:5:My.WordList:Use 'app' instead of 'application'.
+      test.adoc:7:22:My.WordList:Use 'app' instead of 'application'.
+
   - name: dita-token-ignores
     about: "#407 -- ignore patterns apply to DITA. The toolkit reads its
       input from disk, so the patterns are applied to a copy written
