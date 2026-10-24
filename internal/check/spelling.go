@@ -18,7 +18,6 @@ import (
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/nlp"
 	"github.com/vale-cli/vale/v3/internal/spell"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // defaultFilters is the reference the scans in spellfilter.go are tested
@@ -147,7 +146,7 @@ func NewSpelling(cfg *core.Config, generic baseCheck, path string) (Spelling, er
 		//
 		// We **can't** add vocabularies here because `AddWordListFile`
 		// doesn't support regex.
-		ignored, readErr := core.IgnoreFiles(cfg.StylesPath())
+		ignored, readErr := core.IgnoreFiles(cfg.FS, cfg.StylesPath())
 		if readErr != nil {
 			return rule, readErr
 		}
@@ -172,7 +171,7 @@ func NewSpelling(cfg *core.Config, generic baseCheck, path string) (Spelling, er
 			}
 
 			for _, p := range paths {
-				if err = model.AddWordListFile(p); err != nil && system.FileExists(p) {
+				if err = model.AddWordListFile(p); err != nil && cfg.FS.Exists(p) {
 					return rule, err
 				}
 			}
@@ -455,8 +454,8 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 	affloc := core.FindAsset(cfg, s.Aff)
 	dicloc := core.FindAsset(cfg, s.Dic)
 
-	if system.FileExists(affloc) && system.FileExists(dicloc) {
-		return spell.NewChecker(spell.UsingDictionaryByPath(dicloc, affloc))
+	if cfg.FS.Exists(affloc) && cfg.FS.Exists(dicloc) {
+		return spell.NewCheckerFS(cfg.FS, spell.UsingDictionaryByPath(dicloc, affloc))
 	}
 
 	options = append(options, spell.WithDefault(s.Append))
@@ -474,7 +473,7 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 		}
 
 		for _, p := range paths {
-			if system.IsDir(p) {
+			if cfg.FS.IsDir(p) {
 				options = append(options, spell.WithPath(p))
 				found = true
 				break
@@ -493,7 +492,7 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 		for _, name := range s.Dictionaries {
 			options = append(options, spell.UsingDictionary(name))
 		}
-		return spell.NewChecker(options...)
+		return spell.NewCheckerFS(cfg.FS, options...)
 	}
 
 	if rulePath == "internal" {
@@ -503,5 +502,5 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 			filepath.Join(cfg.StylesPath(), core.DictDir)))
 	}
 
-	return spell.NewChecker(options...)
+	return spell.NewCheckerFS(cfg.FS, options...)
 }

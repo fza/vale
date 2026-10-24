@@ -26,7 +26,7 @@ func TestInitCfg(t *testing.T) {
 }
 
 func TestGetIgnores(t *testing.T) {
-	found, err := IgnoreFiles(filepath.Join(testData, "styles"))
+	found, err := IgnoreFiles(system.Default, filepath.Join(testData, "styles"))
 	if err != nil {
 		t.Fatal(err)
 	} else if len(found) != 2 {

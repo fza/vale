@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // reservedScopes are the names Vale gives its own scopes and terms. A named
@@ -43,7 +41,7 @@ func (c *Config) LoadScopes() error {
 		dir := filepath.Join(root, ScopeDir)
 		var files []string
 		for _, ext := range []string{"*.yml", "*.yaml"} {
-			found, err := system.Glob(filepath.Join(dir, ext))
+			found, err := c.FS.Glob(filepath.Join(dir, ext))
 			if err != nil {
 				continue
 			}
@@ -52,7 +50,7 @@ func (c *Config) LoadScopes() error {
 
 		sort.Strings(files)
 		for _, path := range files {
-			if system.IsDir(path) {
+			if c.FS.IsDir(path) {
 				continue
 			}
 			if err := c.loadScopeFile(path); err != nil {
@@ -65,7 +63,7 @@ func (c *Config) LoadScopes() error {
 }
 
 func (c *Config) loadScopeFile(path string) error {
-	b, err := system.ReadFile(path)
+	b, err := c.FS.ReadFile(path)
 	if err != nil {
 		return NewE201FromPosition(err.Error(), path, 1)
 	}

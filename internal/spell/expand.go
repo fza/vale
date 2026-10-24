@@ -27,10 +27,10 @@ func Expand(word, flags string) ([]string, error) {
 }
 
 // ExpandWith is Expand under the `.aff` file at path.
-func ExpandWith(path, word, flags string) ([]string, error) {
+func ExpandWith(fsys system.FS, path, word, flags string) ([]string, error) {
 	cached, ok := affixFiles.Load(path)
 	if !ok {
-		raw, err := system.ReadFile(path)
+		raw, err := fsys.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}

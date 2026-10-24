@@ -12,7 +12,6 @@ import (
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/nlp"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // tengoTimeout bounds one execution of a rule's program, for both the `script`
@@ -77,7 +76,7 @@ func NewScript(cfg *core.Config, generic baseCheck, path string) (Script, error)
 	if strings.HasSuffix(rule.Script, ".tengo") {
 		file := core.FindConfigAsset(cfg, rule.Script, core.ScriptDir)
 
-		b, scriptErr := system.ReadFile(file)
+		b, scriptErr := cfg.FS.ReadFile(file)
 		if scriptErr != nil {
 			return rule, core.NewE201FromTarget(
 				scriptErr.Error(), rule.Script, path)

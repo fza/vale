@@ -81,6 +81,7 @@ func UsingDictionaryByPath(dic, aff string) CheckerOption {
 // Checker is a spell-checker based on multiple dictionaries.
 type Checker struct {
 	options  Options
+	fs       system.FS
 	checkers []*goSpell
 	recased  *sync.Map // word -> its other-case spelling, or ""
 }
@@ -88,12 +89,26 @@ type Checker struct {
 // NewChecker creates a spell checker from multiple
 // Hunspell-compatible dictionaries.
 func NewChecker(options ...CheckerOption) (*Checker, error) {
+	return NewCheckerFS(system.Default, options...)
+}
+
+// fsys is the filesystem the checker reads from: its own, or system.Default
+// for a Checker built without one.
+func (m *Checker) fsys() system.FS {
+	if m.fs == nil {
+		return system.Default
+	}
+	return m.fs
+}
+
+// NewCheckerFS is NewChecker against a filesystem of its own.
+func NewCheckerFS(fsys system.FS, options ...CheckerOption) (*Checker, error) {
 	base := defaultOpts
 	for _, applyOpt := range options {
 		applyOpt(&base)
 	}
 
-	checker := Checker{options: base, recased: &sync.Map{}}
+	checker := Checker{options: base, fs: fsys, recased: &sync.Map{}}
 	for _, name := range base.names {
 		if err := checker.loadDic(name); err != nil {
 			return &checker, err
@@ -102,7 +117,7 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 
 	for _, entry := range base.dics {
 		c, err := sharedDictionary(entry.aff+"\x00"+entry.dic, func() (*goSpell, error) {
-			return newGoSpell(entry.aff, entry.dic)
+			return newGoSpell(fsys, entry.aff, entry.dic)
 		})
 		if err != nil {
 			return &checker, err
@@ -124,7 +139,7 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 
 	if base.defaultPath != "" {
 		// load all dictionaries from the given path ...
-		files, err := system.Glob(base.defaultPath + "/*.dic")
+		files, err := fsys.Glob(base.defaultPath + "/*.dic")
 		if err != nil {
 			return &checker, err
 		}
@@ -268,7 +283,7 @@ func (m *Checker) Convert(s string) string {
 // AddWordListFile reads in a word list file
 func (m *Checker) AddWordListFile(name string) error {
 	for _, checker := range m.checkers {
-		_, err := checker.addWordListFile(name)
+		_, err := checker.addWordListFile(m.fsys(), name)
 		if err != nil {
 			return err
 		}
@@ -289,7 +304,7 @@ func (m *Checker) readAsset(name string) (string, error) {
 		}
 
 		option := filepath.Join(p, name)
-		if system.FileExists(option) {
+		if m.fsys().Exists(option) {
 			return option, nil
 		}
 
@@ -297,7 +312,7 @@ func (m *Checker) readAsset(name string) (string, error) {
 		// $DICPATH). A failed Readlink just means this root doesn't have it,
 		// so keep trying the remaining roots instead of bailing out -- the
 		// early return here previously made Vale ignore $DICPATH (#1014).
-		if ln, err := os.Readlink(option); err == nil && system.FileExists(ln) {
+		if ln, err := m.fsys().Readlink(option); err == nil && m.fsys().Exists(ln) {
 			return ln, nil
 		}
 	}
@@ -311,7 +326,7 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	dic, err := system.Open(dicPath)
+	dic, err := m.fsys().Open(dicPath)
 	if err != nil {
 		return err
 	}
@@ -321,7 +336,7 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	aff, err := system.Open(affPath)
+	aff, err := m.fsys().Open(affPath)
 	if err != nil {
 		return err
 	}

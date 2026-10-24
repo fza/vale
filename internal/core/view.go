@@ -175,10 +175,10 @@ type ScopedValues struct {
 }
 
 // NewView creates a new blueprint from the given path.
-func NewView(path string) (*View, error) {
+func NewView(path string, fsys system.FS) (*View, error) {
 	var view View
 
-	data, err := system.ReadFile(path)
+	data, err := fsys.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

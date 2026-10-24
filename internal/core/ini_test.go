@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 func Test_processConfig_commentDelimiters(t *testing.T) {
@@ -33,7 +35,7 @@ TokenIgnores = (\$+[^\n$]+\$+)
 
 	for _, c := range cases {
 		t.Run(c.description, func(t *testing.T) {
-			uCfg, err := shadowLoad([]byte(c.body))
+			uCfg, err := shadowLoad(system.Default, []byte(c.body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +101,7 @@ CommentDelimiters = "{/*"
 
 	for _, c := range cases {
 		t.Run(c.description, func(t *testing.T) {
-			uCfg, err := shadowLoad([]byte(c.body))
+			uCfg, err := shadowLoad(system.Default, []byte(c.body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +122,7 @@ func Test_processConfig_transform(t *testing.T) {
 	body := `[*.xml]
 Transform = transform.xsl
 `
-	uCfg, err := shadowLoad([]byte(body))
+	uCfg, err := shadowLoad(system.Default, []byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +161,7 @@ func Test_processConfig_transform_abs(t *testing.T) {
 Transform = %s
 `, absPath)
 
-	uCfg, err := shadowLoad([]byte(body))
+	uCfg, err := shadowLoad(system.Default, []byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +201,7 @@ func Test_shadowLoad_sectionsDoNotInherit(t *testing.T) {
 	global := []byte("MinAlertLevel = suggestion\n")
 	local := []byte("[*]\nBasedOnStyles = A\n\n[*.txt]\nBasedOnStyles = B\n")
 
-	uCfg, err := shadowLoad(global, local)
+	uCfg, err := shadowLoad(system.Default, global, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +288,7 @@ Vale.Repetition = NO
 
 	for _, c := range cases {
 		t.Run(c.description, func(t *testing.T) {
-			uCfg, err := shadowLoad([]byte(c.body))
+			uCfg, err := shadowLoad(system.Default, []byte(c.body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -421,7 +423,7 @@ TokenIgnores = \\, \d{1\,3}
 TokenIgnores = \b[a-z]{2\,}\b
 BlockIgnores = BEGIN.{2\,}END, (?s)<!--.*?-->
 `
-	uCfg, err := shadowLoad([]byte(body))
+	uCfg, err := shadowLoad(system.Default, []byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +463,7 @@ func Test_processConfig_laterSourceWins(t *testing.T) {
 	pkg := []byte("[*]\nS.G = error\n\n[*.md]\nS.R = error\nS.R[max] = 10\n")
 	local := []byte("[*]\nS.G = NO\n\n[*.md]\nS.R = suggestion\nS.R[max] = 20\n")
 
-	uCfg, err := shadowLoad(pkg, local)
+	uCfg, err := shadowLoad(system.Default, pkg, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +498,7 @@ Unknown = x
 [*.rst]
 BasedOnStyles = Vale
 `
-	uCfg, err := shadowLoad([]byte(body))
+	uCfg, err := shadowLoad(system.Default, []byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +556,7 @@ func TestBasedOnStylesNone(t *testing.T) {
 		for _, l := range c.layers[1:] {
 			others = append(others, l)
 		}
-		uCfg, err := shadowLoad(c.layers[0], others...)
+		uCfg, err := shadowLoad(system.Default, c.layers[0], others...)
 		if err != nil {
 			t.Fatal(err)
 		}

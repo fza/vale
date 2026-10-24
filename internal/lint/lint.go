@@ -285,7 +285,7 @@ func (l *Linter) lintFiles(done <-chan core.File, root string) (<-chan lintResul
 	go func() {
 		wg := sizedwaitgroup.New(5)
 
-		err := system.Walk(root, func(fp string, info fs.FileInfo, err error) error {
+		err := l.Manager.Config.FS.Walk(root, func(fp string, info fs.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}

@@ -93,7 +93,7 @@ const BuiltinAffix = "en_US-web"
 func AffixExpander(cfg *Config, name string) (ExpandFunc, error) {
 	if aff := findAffix(cfg, name); aff != "" {
 		return func(word, flags string) ([]string, error) {
-			return spell.ExpandWith(aff, word, flags)
+			return spell.ExpandWith(cfg.FS, aff, word, flags)
 		}, nil
 	} else if name == "" || name == BuiltinAffix {
 		return spell.Expand, nil
@@ -103,7 +103,11 @@ func AffixExpander(cfg *Config, name string) (ExpandFunc, error) {
 
 // readVocabYAML adds the entries of the YAML vocabulary at path to vocab.
 func readVocabYAML(path string, vocab *Vocabulary, cfg *Config) error {
-	src, err := system.ReadFile(path)
+	fsys := system.Default
+	if cfg != nil && cfg.FS != nil {
+		fsys = cfg.FS
+	}
+	src, err := fsys.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -203,7 +207,7 @@ func findAffix(cfg *Config, name string) string {
 		roots = append(roots, dicpath)
 	}
 	for _, root := range roots {
-		if candidate := filepath.Join(root, file); system.FileExists(candidate) {
+		if candidate := filepath.Join(root, file); cfg.FS.Exists(candidate) {
 			return candidate
 		}
 	}

@@ -167,8 +167,8 @@ func (s *goSpell) addWordRaw(word string) bool {
 }
 
 // addWordListFile reads in a word list file
-func (s *goSpell) addWordListFile(name string) ([]string, error) {
-	fd, err := system.Open(name)
+func (s *goSpell) addWordListFile(fsys system.FS, name string) ([]string, error) {
+	fd, err := fsys.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1160,13 +1160,13 @@ func (s *goSpell) hasSharp(word string) bool {
 }
 
 // newGoSpell from AFF and DIC Hunspell filenames
-func newGoSpell(affFile, dicFile string) (*goSpell, error) {
-	aff, err := system.Open(affFile)
+func newGoSpell(fsys system.FS, affFile, dicFile string) (*goSpell, error) {
+	aff, err := fsys.Open(affFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open aff: %s", err.Error())
 	}
 	defer aff.Close()
-	dic, err := system.Open(dicFile)
+	dic, err := fsys.Open(dicFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open dic: %s", err.Error())
 	}

@@ -206,7 +206,7 @@ func script(name string, alert core.Alert, cfg *core.Config) ([]string, error) {
 		return suggestions, fmt.Errorf("script '%s' not found", name)
 	}
 
-	compiled, err := compileAction(file)
+	compiled, err := compileAction(file, cfg.FS)
 	if err != nil {
 		return suggestions, err
 	}
@@ -228,12 +228,12 @@ func script(name string, alert core.Alert, cfg *core.Config) ([]string, error) {
 	return suggestions, nil
 }
 
-func compileAction(file string) (*tengo.Compiled, error) {
+func compileAction(file string, fsys system.FS) (*tengo.Compiled, error) {
 	if cached, ok := scripts.Load(file); ok {
 		return cached.(*tengo.Compiled), nil
 	}
 
-	source, err := system.ReadFile(file)
+	source, err := fsys.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}

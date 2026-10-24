@@ -54,10 +54,10 @@ func NormalizePath(path string) string {
 //
 // If `configPath` is not a directory, the directory part of `configPath`
 // is used.
-func DeterminePath(configPath string, keyPath string) string {
+func DeterminePath(fsys FS, configPath string, keyPath string) string {
 	// expand tilde at this point as this is where user-provided paths are provided
 	keyPath = NormalizePath(keyPath)
-	if !IsDir(configPath) {
+	if !fsys.IsDir(configPath) {
 		configPath = filepath.Dir(configPath)
 	}
 

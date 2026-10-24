@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -85,7 +84,7 @@ var nestedConfigNames = []string{
 // FindConfigAsset tries to locate a Vale-related resource by looking in the
 // user-defined StylesPath(s).
 func FindConfigAsset(cfg *Config, name, dir string) string {
-	return getConfigAsset(name, cfg.SearchPaths(), []string{dir})
+	return getConfigAsset(cfg.FS, name, cfg.SearchPaths(), []string{dir})
 }
 
 // FindAsset tries to locate a Vale-related resource by looking in the
@@ -97,17 +96,17 @@ func FindAsset(cfg *Config, path string) string {
 
 	for _, p := range cfg.SearchPaths() {
 		inPath := filepath.Join(p, path)
-		if system.FileExists(inPath) {
+		if cfg.FS.Exists(inPath) {
 			return inPath
 		}
 	}
 
-	if p := getConfigAsset(path, cfg.SearchPaths(), ConfigDirs); p != "" {
+	if p := getConfigAsset(cfg.FS, path, cfg.SearchPaths(), ConfigDirs); p != "" {
 		return p
 	}
 
-	p := system.DeterminePath(cfg.Flags.Path, path)
-	if system.FileExists(p) {
+	p := system.DeterminePath(cfg.FS, cfg.Flags.Path, path)
+	if cfg.FS.Exists(p) {
 		return p
 	}
 
@@ -115,18 +114,18 @@ func FindAsset(cfg *Config, path string) string {
 }
 
 // IgnoreFiles returns a list of all user-defined ignore files.
-func IgnoreFiles(stylesPath string) ([]string, error) {
+func IgnoreFiles(fsys system.FS, stylesPath string) ([]string, error) {
 	ignore := filepath.Join(stylesPath, IgnoreDir)
-	return system.GlobRecursive(ignore, "*.txt")
+	return fsys.GlobRecursive(ignore, "*.txt")
 }
 
 // getConfigAsset returns the path to a given asset if it exists.
 // Otherwise, it returns an empty string.
-func getConfigAsset(target string, paths, dirs []string) string {
+func getConfigAsset(fsys system.FS, target string, paths, dirs []string) string {
 	for _, p := range paths {
 		for _, dir := range dirs {
 			path := filepath.Join(p, dir, target)
-			if system.FileExists(path) {
+			if fsys.Exists(path) {
 				return path
 			}
 		}
@@ -163,6 +162,10 @@ type CLIFlags struct {
 	Version       bool
 	Help          bool
 	IgnoreGlobal  bool
+
+	// FS is the filesystem the resulting Config reads its assets from. nil,
+	// the zero value, means system.Default.
+	FS system.FS
 }
 
 // Config holds the configuration values from both the CLI and `.vale.ini`.
@@ -196,8 +199,13 @@ type Config struct {
 	WordTemplate      string                       // The template used in YAML -> regexp list conversions
 	RootINI           string                       // the path to the project's .vale.ini file
 	RootDir           string                       // the directory the search found RootINI at
-	Paths             []string                     // A list of paths to search for styles
-	ConfigFiles       []string                     // A list of configuration files to load
+	// FS is the filesystem this Config's assets -- styles, vocabularies,
+	// dictionaries, filters, views, templates -- are read from. It defaults
+	// to system.Default; a host serving concurrent requests over in-memory
+	// files gives each Config one of its own, so no two share mutable state.
+	FS          system.FS `json:"-"`
+	Paths       []string  // A list of paths to search for styles
+	ConfigFiles []string  // A list of configuration files to load
 
 	AcceptedTokens []string `json:"-"` // Project-specific vocabulary (okay)
 	RejectedTokens []string `json:"-"` // Project-specific vocabulary (avoid)
@@ -254,6 +262,12 @@ func NewConfig(flags *CLIFlags) (*Config, error) {
 	cfg.Scopes = make(map[string]string)
 	cfg.Paths = []string{}
 	cfg.ConfigFiles = []string{}
+
+	if flags.FS != nil {
+		cfg.FS = flags.FS
+	} else {
+		cfg.FS = system.Default
+	}
 
 	found, _ := DefaultStylesPath()
 	if !flags.IgnoreGlobal && system.IsDir(found) {
@@ -362,7 +376,7 @@ func (c *Config) Cached(key string, build func() any) any {
 
 // AddWordListFile adds vocab terms from a provided file.
 func (c *Config) AddWordListFile(name string, accept bool) error {
-	fd, err := system.Open(name)
+	fd, err := c.FS.Open(name)
 	if err != nil {
 		return err
 	}
@@ -411,17 +425,17 @@ func pipeConfig(cfg *Config) ([]string, error) {
 	var sources []string
 
 	pipeline := filepath.Join(cfg.StylesPath(), ".vale-config")
-	if system.IsDir(pipeline) && len(cfg.Flags.Sources) == 0 {
-		configs, err := os.ReadDir(pipeline)
+	if cfg.FS.IsDir(pipeline) && len(cfg.Flags.Sources) == 0 {
+		configs, err := cfg.FS.Glob(filepath.Join(pipeline, "*"))
 		if err != nil {
 			return sources, err
 		}
 
 		for _, config := range configs {
-			if config.IsDir() {
+			if cfg.FS.IsDir(config) {
 				continue
 			}
-			sources = append(sources, filepath.Join(pipeline, config.Name()))
+			sources = append(sources, config)
 		}
 		sources = append(sources, cfg.ConfigFiles...)
 	}

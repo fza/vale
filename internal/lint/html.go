@@ -8,7 +8,6 @@ import (
 	rx "github.com/vale-cli/vale/v3/internal/regex"
 
 	"github.com/vale-cli/vale/v3/internal/core"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 var reFrontMatter = regexp.MustCompile(
@@ -200,7 +199,7 @@ func applyPatterns(c *core.Config, exts extensionConfig, content string) (string
 }
 
 func (l *Linter) lintTxtToHTML(f *core.File) error {
-	html, err := system.ReadFile(l.Manager.Config.Flags.Built)
+	html, err := l.Manager.Config.FS.ReadFile(l.Manager.Config.Flags.Built)
 	if err != nil {
 		return core.NewE100(f.Path, err)
 	}

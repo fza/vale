@@ -15,7 +15,6 @@ import (
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/nlp"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // Manager controls the loading and validating of the check extension points.
@@ -76,7 +75,7 @@ func NewManager(config *core.Config) (*Manager, error) {
 			fName := filepath.Join(parts[1:]...) + ".yml"
 			for _, p := range mgr.Config.SearchPaths() {
 				path = filepath.Join(p, parts[0], fName)
-				if !system.FileExists(path) {
+				if !mgr.Config.FS.Exists(path) {
 					continue
 				}
 				if err = mgr.addCheckFile(chk, path); err != nil {
@@ -126,7 +125,7 @@ func (mgr *Manager) RuleForAlert(name string) string {
 
 // AddRuleFromFile adds the given rule to the manager.
 func (mgr *Manager) AddRuleFromFile(name, path string) error {
-	content, err := system.ReadFile(path)
+	content, err := mgr.Config.FS.ReadFile(path)
 	if err != nil {
 		return core.NewE100(path, err)
 	}
@@ -214,7 +213,7 @@ func (mgr *Manager) addStyle(path string) error {
 	}
 
 	var sources []source
-	err := system.Walk(path, func(fp string, info fs.FileInfo, err error) error {
+	err := mgr.Config.FS.Walk(path, func(fp string, info fs.FileInfo, err error) error {
 		switch {
 		case err != nil:
 			return err
@@ -289,7 +288,7 @@ func (mgr *Manager) addStyle(path string) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			data, rerr := system.ReadFile(path)
+			data, rerr := mgr.Config.FS.ReadFile(path)
 			if rerr != nil {
 				results[i].err = core.NewE201FromPosition(rerr.Error(), path, 1)
 				return
@@ -317,7 +316,7 @@ func (mgr *Manager) addStyle(path string) error {
 }
 
 func (mgr *Manager) addCheckFile(chkName, path string) error {
-	f, err := system.ReadFile(path)
+	f, err := mgr.Config.FS.ReadFile(path)
 	if err != nil {
 		return core.NewE201FromPosition(err.Error(), path, 1)
 	}
@@ -532,7 +531,7 @@ func (mgr *Manager) loadStyles(styles []string) error {
 			if mgr.hasStyle(style) {
 				// We've already loaded this style.
 				continue
-			} else if has := system.IsDir(p); !has {
+			} else if has := mgr.Config.FS.IsDir(p); !has {
 				need = append(need, style)
 				continue
 			} else if err := mgr.addStyle(p); err != nil {

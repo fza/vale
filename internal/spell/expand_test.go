@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 func TestExpand(t *testing.T) {
@@ -48,7 +50,7 @@ func TestExpandWith(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := ExpandWith(path, "Schnittstelle", "NU")
+	got, err := ExpandWith(system.Default, path, "Schnittstelle", "NU")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func TestExpandWith(t *testing.T) {
 	}
 
 	// S is a flag in the default file, not in this one.
-	if _, err = ExpandWith(path, "Schnittstelle", "S"); err == nil {
+	if _, err = ExpandWith(system.Default, path, "Schnittstelle", "S"); err == nil {
 		t.Error("ExpandWith accepted a flag the file doesn't define")
 	}
 }

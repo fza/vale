@@ -85,7 +85,13 @@ func FromString(src string, cfg *Config, dry bool) (*ini.File, error) {
 // with its assets resolved against the active filesystem. It is the entry
 // point for a host that has no config file on disk, such as a browser.
 func LoadConfigFromString(src string) (*Config, error) {
-	cfg, err := NewConfig(&CLIFlags{})
+	return LoadConfigFromStringFS(nil, src)
+}
+
+// LoadConfigFromStringFS is LoadConfigFromString against a filesystem of its
+// own; nil means system.Default.
+func LoadConfigFromStringFS(fsys system.FS, src string) (*Config, error) {
+	cfg, err := NewConfig(&CLIFlags{FS: fsys})
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +102,7 @@ func LoadConfigFromString(src string) (*Config, error) {
 }
 
 func validateFlags(cfg *Config) error {
-	if cfg.Flags.Path != "" && !system.FileExists(cfg.Flags.Path) {
+	if cfg.Flags.Path != "" && !cfg.FS.Exists(cfg.Flags.Path) {
 		return NewE100(
 			"--config",
 			fmt.Errorf("path '%s' does not exist", cfg.Flags.Path))
@@ -105,7 +111,7 @@ func validateFlags(cfg *Config) error {
 }
 
 func loadStdin(src string, cfg *Config, dry bool) (*ini.File, error) {
-	uCfg, err := shadowLoad([]byte(src))
+	uCfg, err := shadowLoad(cfg.FS, []byte(src))
 	if err != nil {
 		return nil, NewE100("config", err)
 	}
@@ -130,7 +136,7 @@ func loadINI(cfg *Config, dry bool) (*ini.File, error) {
 	// single config file, so we only load this one if it's the only one (see
 	// below).
 	defaultCfg, _ := DefaultConfig()
-	hasDefault := system.FileExists(defaultCfg) && !cfg.Flags.IgnoreGlobal
+	hasDefault := cfg.FS.Exists(defaultCfg) && !cfg.Flags.IgnoreGlobal
 
 	if hasDefault && !dry {
 		sources = append(sources, defaultCfg)

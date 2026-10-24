@@ -44,6 +44,10 @@ type Runner struct {
 	paths    []string
 	pathsSet bool
 
+	// fs is the filesystem cases read rules and documents through, so a
+	// configuration over in-memory files tests exactly the files it holds.
+	fs system.FS
+
 	// Install puts packages into a StylesPath the way `vale sync` does. With
 	// it, a package's own `Packages` are installed for its isolated cases, so
 	// a rule that extends Std resolves without a synced project.
@@ -57,7 +61,11 @@ type Runner struct {
 
 // NewRunner prepares to run cases against the configuration in `flags`.
 func NewRunner(flags *core.CLIFlags) *Runner {
-	return &Runner{flags: flags, deps: map[string][]string{}}
+	fsys := system.Default
+	if flags != nil && flags.FS != nil {
+		fsys = flags.FS
+	}
+	return &Runner{flags: flags, fs: fsys, deps: map[string][]string{}}
 }
 
 // Close removes the packages installed for the run.
@@ -109,7 +117,7 @@ func (r *Runner) linterFor(c Case) (*lint.Linter, error) {
 		if err != nil {
 			return nil, err
 		}
-		return isolate(c, search)
+		return isolate(c, search, r.fs)
 	}
 
 	if r.project == nil {
@@ -243,7 +251,7 @@ func onPath(name string, search []string) bool {
 // path, that is its full path under the style root (`Std.dates.TimeFormat`);
 // otherwise the parent directory is the style, as before. Either way a case
 // can be moved between the two modes without its `want` changing.
-func isolate(c Case, search []string) (*lint.Linter, error) {
+func isolate(c Case, search []string, fsys system.FS) (*lint.Linter, error) {
 	path := c.Rule
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(filepath.Dir(c.Path), path)
@@ -252,7 +260,7 @@ func isolate(c Case, search []string) (*lint.Linter, error) {
 	name := isolatedName(path, search)
 	style := core.StyleName(name)
 
-	cfg, err := core.NewConfig(&core.CLIFlags{})
+	cfg, err := core.NewConfig(&core.CLIFlags{FS: fsys})
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +285,7 @@ func isolate(c Case, search []string) (*lint.Linter, error) {
 			return nil, fmt.Errorf("%s: %q: view '%s' not found under config/views on the search path",
 				filepath.Base(c.Path), c.Name, c.View)
 		}
-		view, vErr := core.NewView(viewPath)
+		view, vErr := core.NewView(viewPath, cfg.FS)
 		if vErr != nil {
 			return nil, vErr
 		}

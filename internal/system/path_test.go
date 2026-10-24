@@ -38,12 +38,12 @@ func TestDeterminePath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		actual := DeterminePath(tt.configPath, tt.keyPath)
+		actual := DeterminePath(OSFS{}, tt.configPath, tt.keyPath)
 		// Clean the paths to ensure separators match for comparison
 		actual = filepath.Clean(actual)
 		expected := filepath.Clean(tt.expected)
 		if actual != expected {
-			t.Errorf("DeterminePath(%q, %q) = %q; want %q", tt.configPath, tt.keyPath, actual, expected)
+			t.Errorf("DeterminePath(OSFS{}, %q, %q) = %q; want %q", tt.configPath, tt.keyPath, actual, expected)
 		}
 	}
 }

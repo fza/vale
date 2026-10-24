@@ -7,7 +7,6 @@ import (
 	"github.com/expr-lang/expr"
 
 	"github.com/vale-cli/vale/v3/internal/core"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 func filter(mgr *Manager) (map[string]Rule, error) {
@@ -18,16 +17,16 @@ func filter(mgr *Manager) (map[string]Rule, error) {
 		return mgr.rules, nil
 	}
 
-	if system.FileExists(stringOrPath) {
+	if mgr.Config.FS.Exists(stringOrPath) {
 		// Case 1: The user has provided a valid path to a filter file.
-		b, err := system.ReadFile(stringOrPath)
+		b, err := mgr.Config.FS.ReadFile(stringOrPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read filter '%s': %w", stringOrPath, err)
 		}
 		filter = string(b)
 	} else if found := core.FindAsset(mgr.Config, stringOrPath); found != "" {
 		// Case 2: The user has referenced a filter stored on the `StylesPath`.
-		b, err := system.ReadFile(found)
+		b, err := mgr.Config.FS.ReadFile(found)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read filter '%s': %w", found, err)
 		}

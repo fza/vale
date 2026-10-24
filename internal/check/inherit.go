@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/vale-cli/vale/v3/internal/core"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 // A rule may extend another rule instead of an extension point: an `extends`
@@ -88,7 +87,7 @@ func (mgr *Manager) flatten(generic baseCheck, path string, seen []string) (base
 		return nil, core.NewE201FromPosition(err.Error(), path, 1)
 	}
 
-	data, err := system.ReadFile(parentPath)
+	data, err := mgr.Config.FS.ReadFile(parentPath)
 	if err != nil {
 		return nil, core.NewE201FromPosition(err.Error(), parentPath, 1)
 	}
@@ -122,7 +121,7 @@ func (mgr *Manager) resolveRule(name string) (string, error) {
 	rel := filepath.Join(parts[1:]...) + ".yml"
 	for _, p := range mgr.Config.SearchPaths() {
 		candidate := filepath.Join(p, parts[0], rel)
-		if system.FileExists(candidate) {
+		if mgr.Config.FS.Exists(candidate) {
 			return candidate, nil
 		}
 	}

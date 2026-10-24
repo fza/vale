@@ -17,7 +17,6 @@ import (
 	"github.com/jdkato/prose/v3/tag"
 
 	"github.com/vale-cli/vale/v3/internal/nlp"
-	"github.com/vale-cli/vale/v3/internal/system"
 )
 
 var commentControlRE = regexp.MustCompile(`^vale (.+\..+|[^.]+) = (YES|NO|on|off)$`)
@@ -126,8 +125,8 @@ func NewFile(src string, config *Config) (*File, error) {
 	var lookup bool
 	path := src
 
-	if system.FileExists(src) {
-		fbytes, _ = system.ReadFile(src)
+	if config.FS.Exists(src) {
+		fbytes, _ = config.FS.ReadFile(src)
 		if config.Flags.InExt != ".txt" {
 			ext, format = FormatFromExt(config.Flags.InExt, config.Formats)
 		} else {
