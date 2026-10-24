@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/nlp"
@@ -40,14 +41,22 @@ func (l *Linter) skipsComment(scope string) bool {
 		core.StringInSlice(scope, ignored)
 }
 
-// maskURLs blanks the URLs in a comment: a URL is never prose, and in
-// markup the converter keeps one out of the text already.
 // urlRE matches a URL in a comment, up to the punctuation that would
 // close a sentence or a bracket around it.
 var urlRE = regexp.MustCompile(`\b(?:https?|ftp)://[^\s<>"'` + "`" + `)\]]*[^\s<>"'` + "`" + `)\].,;:!?]`)
 
+// maskURLs masks the URLs in a comment: a URL is never prose, and in
+// markup the converter keeps one out of the text already.
+//
+// Each character becomes a `*`, Markdown's own mask for inline code. A rule's
+// space matches any run of whitespace, so a URL blanked to spaces let a pattern
+// join the words on either side of it; a `*` is no space and no word
+// character, so nothing crosses it and nothing counts it as a word. The
+// character count survives, and an alert counts its columns in characters.
 func maskURLs(s string) string {
-	return urlRE.ReplaceAllStringFunc(s, nlp.BlankRunes)
+	return urlRE.ReplaceAllStringFunc(s, func(url string) string {
+		return strings.Repeat("*", utf8.RuneCountInString(url))
+	})
 }
 
 func (l *Linter) lintCodeOld(f *core.File) error {
