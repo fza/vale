@@ -300,6 +300,7 @@ func main() {
 	g.Set("ValeLint", js.FuncOf(ValeLint))
 	g.Set("ValeLintBuilt", js.FuncOf(ValeLintBuilt))
 	g.Set("ValeConverterOptions", js.FuncOf(ValeConverterOptions))
+	g.Set("ValeResolveConfig", js.FuncOf(ValeResolveConfig))
 	g.Set("ValeTransform", js.FuncOf(ValeTransform))
 	g.Set("ValeSuggest", js.FuncOf(ValeSuggest))
 	g.Set("ValeAddFile", js.FuncOf(ValeAddFile))

@@ -95,6 +95,19 @@ assert.deepEqual(ValeConverterOptions("xml", custom).params, { "use.extensions":
 assert.ok(ValeConverterOptions("rst", custom).args.includes("--no-section-numbering"));
 assert.match(ValeConverterOptions("md", custom).error, /no converter options/);
 
+// A configuration resolves to each section's rules and their states.
+ValeAddFile("/styles/T/W.yml", "extends: existence\nmessage: \"'%s'\"\nlevel: error\ntokens:\n  - very\n");
+ValeAddFile("/styles/T/Off.yml", "extends: existence\nmessage: \"'%s'\"\nlevel: error\ntokens:\n  - off\n");
+out = ValeResolveConfig("StylesPath = /styles\nMinAlertLevel = warning\n\n[*.md]\nBasedOnStyles = T\nT.Off = NO\nT.W = suggestion\n");
+assert.equal(out.error, undefined, out.error);
+const resolved = JSON.parse(out.result);
+assert.equal(resolved.error, undefined, resolved.error);
+assert.equal(resolved.global.minAlertLevel, "warning");
+assert.deepEqual(resolved.sections.map((s) => [s.glob, s.active, s.overridden, s.disabled]), [["*.md", 0, 1, 1]]);
+out = ValeResolveConfig("MinAlertLevel = suggestion\n\n[*]\nBasedOnStyles = Vale\n");
+assert.deepEqual(JSON.parse(out.result).sections.map((s) => [s.glob, s.active > 0]), [["*", true]]);
+assert.deepEqual(resolved.sections[0].rules.map((r) => [r.ref, r.state, r.level ?? ""]), [["T.Off", "disabled", ""], ["T.W", "override", "suggestion"]]);
+
 ValeResetFS();
 assert.deepEqual(ValeListFS().paths, []);
 
