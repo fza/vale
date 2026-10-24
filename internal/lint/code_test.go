@@ -2,6 +2,7 @@ package lint
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 )
@@ -67,6 +68,34 @@ func TestLanguageForMappedExtension(t *testing.T) {
 			if got := langErr == nil && lang != nil; got != tt.want {
 				t.Errorf("languageFor(%q) with %v found a grammar = %v, want %v",
 					tt.ext, tt.formats, got, tt.want)
+			}
+		})
+	}
+}
+
+// A URL in a code comment is never prose. Masking it the way Markdown masks
+// inline code keeps a rule from reading it, and from joining the words on
+// either side of it, while every column after it still lands.
+func TestMaskURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"no URL passes through", "Plain prose here.", "Plain prose here."},
+		{"a URL becomes a mask of its own width", "See https://example.com/x for more.", "See ********************* for more."},
+		{"the punctuation closing a sentence stays", "Read https://example.com/x.", "Read *********************."},
+		{"a URL of several bytes per character keeps its character count", "See https://example.com/café here.", "See ************************ here."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskURLs(tt.text)
+			if got != tt.want {
+				t.Errorf("a URL should be masked in place: got %q, want %q", got, tt.want)
+			}
+			if utf8.RuneCountInString(got) != utf8.RuneCountInString(tt.text) {
+				t.Error("character count has to survive, or an alert maps onto the wrong column")
 			}
 		})
 	}
