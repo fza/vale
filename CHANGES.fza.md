@@ -84,6 +84,54 @@ is resolved.
 - `internal/core/file.go` -- `File.Level`, `File.RegionDisabled`.
 - `internal/core/util_test.go` -- `TestSettingKeys`; `testdata/e2e/config.yaml` case `style-group-disabled`.
 
+### Masked comment text is a run no rule crosses
+
+A code comment carries no markup, so three things in it are masked out of its
+text before a rule reads it: what it marks as code (a backticked span, a fenced
+block), a URL, and the run of names a doc comment opens with. Each was blanked
+to spaces, and a space in a rule's token matches any run of whitespace, so a
+pattern joined the words on either side of the blank. `` It reads the `config`
+the daemon writes. `` reported `the` as repeated, a phrase rule matched `see`
+and `for` across a URL, and `Package probe does` matched `Package does`. In
+Markdown the same lines report nothing, because Markdown masks inline code
+with `*`.
+
+Every masked character in a comment is now a `*` as well. It is no space, so no
+pattern crosses it, and no word character, so no rule counts it as a word or
+spells it. One `*` stands for one character rather than one byte, because an
+alert counts its columns in characters: a span holding `é` pushed every alert
+after it one column right per extra byte.
+
+The URL mask is upstream's own code, so its fix is a branch of its own cut from
+upstream, `fix/url-mask-placeholder`, and lifts out as an upstream pull request
+alone. The span mask and the opener mask are fixed on the branches that carry
+them.
+
+Rejected:
+
+- Spaces: every whitespace-widened pattern crosses them.
+- A blank of the masked text's own byte width -- a no-break space or an
+  ideographic space for a wider character, as upstream's URL mask used: a
+  rule's `\s` does not match those, so a URL holding one stopped a phrase and an
+  ASCII URL did not. One mask has to behave one way whatever it covers.
+- Dropping the alerts inside a masked range, as upstream does for a
+  documentation tag (`code.Mask`): the text stays readable, so a rule still
+  spells an identifier and reads a URL's words.
+- The code span alone, or the code span and the URL: a URL and the name after
+  `Package` were crossed the same way, and each left out would need a release
+  of its own.
+- The URL fix on `feat/comment-code-mask`, beside the span mask it runs with:
+  that branch's pull request would then change upstream's URL handling as well.
+
+Accepted cost: a consumer's alerts move. One that matched across a mask
+disappears, and one that a phrase exemption suppressed by matching across a
+mask appears, as it already did for the same line in Markdown.
+
+- `internal/lint/code.go` -- `maskKeepingLines` under `maskCode`, `mask` under `maskDocOpener`, `maskURLs`.
+- `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone.
+- `internal/lint/code_test.go` -- `TestMaskCode`, `TestMaskURLs`; `internal/lint/docopener_test.go`.
+- `testdata/e2e/lint.yaml` -- cases `code-span-placeholder` (Go, C, C++, Rust, Python, with Markdown as the control), `url-placeholder` (Go, C, Python, and Clojure through the regex fallback) and `doc-opener-placeholder`.
+
 ## Features
 
 ### A directive written as a tag
@@ -119,21 +167,22 @@ the alert on them could no longer be placed.
 
 A code comment carries no markup for a parser to skip, so a prose rule read an
 identifier, a flag, a path or a whole sample of output as prose. Each is now
-blanked to spaces of its own byte length, with a line break inside a fence
-surviving as one, so every line and every column is preserved and an alert still
-maps back onto the source. A fence is masked first, so the backticks opening and
-closing it cannot pair with the ones a span inside it carries.
+masked with one `*` per character, with a line break inside a fence surviving
+as one, so every line and every column is preserved and an alert still maps back
+onto the source; "Masked comment text is a run no rule crosses" says why `*`. A
+fence is masked first, so the backticks opening and closing it cannot pair with
+the ones a span inside it carries.
 
-- `internal/lint/code.go` — `maskCode`, `fencedCode`, `inlineCode`, `blankKeepingLines`.
-- `internal/lint/code_test.go`.
+- `internal/lint/code.go` — `maskCode`, `fencedCode`, `inlineCode`, `maskKeepingLines`.
+- `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`.
 
 ### A doc comment's opening run reads as code
 
 Go, C, Swift and Rust all ask a doc comment to open with the name it documents,
 and no markup is allowed in that position — the one place backticks cannot
-reach. That run is blanked so a documented symbol reads as code rather than as
-prose. One comment may document several symbols at once, written as names
-separated by slashes, and every name in the run is masked.
+reach. That run is masked, as inline code is, so a documented symbol reads as
+code rather than as prose. One comment may document several symbols at once,
+written as names separated by slashes, and every name in the run is masked.
 
 The mask applies only where the source below names the symbol, so a comment
 opening with a misspelled name still reports. The first name is checked against
@@ -153,7 +202,7 @@ two agree wherever both apply.
 
 - `internal/lint/code.go` — `maskDocOpener`, `docOpener`, `packageOpener`, `runNames`, `declares`, `declarationBlock`, `namedInAny`, `namedIn`, `commentEnd`, `mask`, `blockSlack`; the call gated on `lang.OpensWithName`.
 - `internal/lint/code/lang.go` — `Language.OpensWithName`, set in `go.go`, `c.go`, `cpp.go` and `rs.go`.
-- `internal/lint/docopener_test.go`; `testdata/e2e/lint.yaml` case `doc-opener-by-language`.
+- `internal/lint/docopener_test.go`; `testdata/e2e/lint.yaml` cases `doc-opener-by-language` and `doc-opener-placeholder`.
 
 ### A Go string literal is its own scope family
 
