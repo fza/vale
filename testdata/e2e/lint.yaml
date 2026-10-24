@@ -2585,3 +2585,53 @@ cases:
       probe.md:4:18:Vale.Spelling:Did you really mean 'valuue'?
       probe.py:4:20:Vale.Spelling:Did you really mean 'valuue'?
       probe.rs:4:21:Vale.Spelling:Did you really mean 'valuue'?
+
+  - name: url-placeholder
+    about: "A URL in a source comment reads as a run no rule crosses, as a
+      link does in Markdown: Repetition and a phrase never join the words on
+      either side of it, and an alert after it keeps its column, counted in
+      characters, past a URL holding a character of several bytes. Clojure is
+      read by the regex fallback, the rest through tree-sitter."
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale, Probe
+      styles/Probe/Phrase.yml: |
+        extends: existence
+        message: "Phrase '%s' crossed a URL."
+        level: error
+        tokens:
+          - see for
+      probe.go: |
+        package probe
+
+        // Open the https://example.com/y the call.
+        // Read it, see https://example.com/x for more.
+        // Keep https://example.com/café valuue here.
+        func Probe() {}
+      probe.c: |
+        // Open the https://example.com/y the call.
+        // Read it, see https://example.com/x for more.
+        // Keep https://example.com/café valuue here.
+        int probe(void);
+      probe.py: |
+        # Open the https://example.com/y the call.
+        # Read it, see https://example.com/x for more.
+        # Keep https://example.com/café valuue here.
+        def probe():
+            pass
+      probe.clj: |
+        ;; Open the https://example.com/y the call.
+        ;; Read it, see https://example.com/x for more.
+        ;; Keep https://example.com/café valuue here.
+        (defn probe [])
+    args: --output=line --no-exit probe.c probe.clj probe.go probe.py
+    exit: 0
+    want: |
+      probe.c:3:34:Vale.Spelling:Did you really mean 'valuue'?
+      probe.clj:3:34:Vale.Spelling:Did you really mean 'valuue'?
+      probe.go:5:34:Vale.Spelling:Did you really mean 'valuue'?
+      probe.py:3:33:Vale.Spelling:Did you really mean 'valuue'?
