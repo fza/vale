@@ -205,12 +205,16 @@ var fencedCode = regexp.MustCompile("(?s)```.*?```")
 // never closed stays the text it is rather than reading as an empty span.
 var inlineCode = regexp.MustCompile("`[^`\n]+`")
 
-// maskCode blanks what a comment marks as code, so a prose rule reads a comment
+// maskCode masks what a comment marks as code, so a prose rule reads a comment
 // the way it reads Markdown. A code comment carries no markup for a parser to
 // skip, so a fenced block and a backticked span are masked here instead.
 //
-// Each becomes spaces of its own byte length, and a line break inside a fence
-// survives as one. The text keeps every line and every column, which is what
+// Each character becomes a `*`, Markdown's own mask for inline code, and a line
+// break inside a fence survives as one. A rule's space matches any run of
+// whitespace, so a span blanked to spaces let a pattern join the words on
+// either side of it; a `*` is no space and no word character, so nothing
+// crosses it and nothing counts it as a word. The text keeps every line and
+// every column, counted in characters as an alert counts them, which is what
 // lets an alert map back onto the source through the comment's own strip table.
 //
 // A fence is masked first, so the backticks opening and closing it cannot pair
@@ -220,22 +224,17 @@ func maskCode(text string) string {
 		return text
 	}
 
-	text = fencedCode.ReplaceAllStringFunc(text, blankKeepingLines)
-	return inlineCode.ReplaceAllStringFunc(text, blankKeepingLines)
+	text = fencedCode.ReplaceAllStringFunc(text, maskKeepingLines)
+	return inlineCode.ReplaceAllStringFunc(text, maskKeepingLines)
 }
 
-func blankKeepingLines(span string) string {
-	var blanked strings.Builder
-
-	for _, b := range []byte(span) {
-		if b == '\n' {
-			blanked.WriteByte('\n')
-			continue
+func maskKeepingLines(span string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' {
+			return r
 		}
-		blanked.WriteByte(' ')
-	}
-
-	return blanked.String()
+		return '*'
+	}, span)
 }
 
 // lintCodeOld lints source code by analyzing its comments.
