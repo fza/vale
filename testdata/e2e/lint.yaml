@@ -2000,6 +2000,36 @@ cases:
     want: |
       c.js:1:4:T.Tok:'Zqxify' found
 
+  - name: doc-opener-placeholder
+    about: "a doc comment's masked name reads as a run no rule crosses, as
+      inline code does in Markdown: a phrase never joins the word `Package`
+      to the verb after the package name, and the control shows the phrase
+      reported where nothing is masked"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        T.Phrase = YES
+      styles/T/Phrase.yml: |
+        extends: existence
+        message: "'%s' crossed a masked name"
+        level: error
+        tokens:
+          - Package implements
+          - Package rewords
+      a.go: |
+        // Package probe implements the backend.
+        package probe
+      b.go: |
+        // Package rewords the backend.
+        package other
+    args: a.go b.go
+    exit: 1
+    want: |
+      b.go:1:4:T.Phrase:'Package rewords' crossed a masked name
+
   - name: php
     args: test.php
     exit: 0
