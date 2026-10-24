@@ -65,6 +65,36 @@ assert.equal(JSON.parse(out.result)["input.txt"].length, 1);
 out = ValeLint("<p>This is <code>very</code> very good.</p>\n", "html", custom);
 assert.deepEqual(JSON.parse(out.result)["input.html"].map((a) => a.Span), [[30, 33]]);
 
+// A format Vale reads through a converter is linted from HTML the host
+// converted, with the same arguments Vale would have used. The fixtures
+// were produced by the real converters with those arguments.
+const fixtures = path.join(path.dirname(new URL(import.meta.url).pathname), "fixtures");
+const built = (name) => fs.readFileSync(path.join(fixtures, name), "utf8");
+const builtCases = [
+  // A source block, a line comment, and a text-less xref are not prose.
+  ["adoc", [[3, [9, 12]], [15, [6, 9]]]],
+  ["rst", [[4, [9, 12]], [10, [6, 9]]]],
+  ["xml", [[4, [17, 20]], [6, [14, 17]]]],
+  ["dita", [[6, [16, 19]], [8, [13, 16]]]],
+];
+for (const [format, want] of builtCases) {
+  out = ValeLintBuilt(built(`doc.${format}`), format, built(`doc.${format}.html`), custom);
+  assert.equal(out.error, undefined, `${format}: ${out.error}`);
+  alerts = JSON.parse(out.result)[`input.${format}`];
+  assert.deepEqual(alerts.map((a) => [a.Line, a.Span]), want, format);
+}
+out = ValeLintBuilt("# Title\n", "md", "<h1>Title</h1>", custom);
+assert.match(out.error, /no built form/);
+
+// The host is told what to give its converter.
+out = ValeConverterOptions("adoc", custom);
+assert.ok(out.attributes.includes("notitle!") && out.attributes.includes("sectnums!"), "adoc attributes");
+assert.equal(out.safe, "secure");
+assert.match(out.converter, /ValeHtml5Converter/);
+assert.deepEqual(ValeConverterOptions("xml", custom).params, { "use.extensions": "0", "generate.toc": "nop" });
+assert.ok(ValeConverterOptions("rst", custom).args.includes("--no-section-numbering"));
+assert.match(ValeConverterOptions("md", custom).error, /no converter options/);
+
 ValeResetFS();
 assert.deepEqual(ValeListFS().paths, []);
 

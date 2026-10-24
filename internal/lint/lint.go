@@ -187,6 +187,23 @@ func (l *Linter) LintStringAs(content, virtualName string) ([]*core.File, error)
 	return []*core.File{linted.file}, linted.err
 }
 
+// LintBuilt lints content as the document named virtualName, from the HTML
+// that a converter the host ran produced for it. It is how a host without
+// the converter Vale would run, such as a browser with Asciidoctor.js, lints
+// a format Vale reads through one.
+func (l *Linter) LintBuilt(content, virtualName, html string) ([]*core.File, error) {
+	l.singleDoc = true
+	defer l.stopExternal()
+
+	file, err := core.NewFileFromContent(content, virtualName, l.Manager.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	linted := l.lintPrepared(file, []byte(html))
+	return []*core.File{linted.file}, linted.err
+}
+
 // Lint src according to its format.
 func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	var linted []*core.File
@@ -323,6 +340,12 @@ func (l *Linter) lintFile(src string) lintResult {
 
 // lintPreparedFile lints a File already built, from disk or from memory.
 func (l *Linter) lintPreparedFile(file *core.File) lintResult {
+	return l.lintPrepared(file, nil)
+}
+
+// lintPrepared lints file; built is the HTML a converter the host ran
+// produced for it, or nil when Vale runs the converter itself.
+func (l *Linter) lintPrepared(file *core.File, built []byte) lintResult {
 	var err error
 
 	if l.runsNothing(file) {
@@ -343,7 +366,9 @@ func (l *Linter) lintPreparedFile(file *core.File) lintResult {
 	// we actually have a View to apply.
 	hasViews := len(l.Manager.Config.Views) > 0
 
-	if !simple && l.hasView(file) { //nolint:gocritic
+	if built != nil { //nolint:gocritic
+		err = l.lintBuilt(file, built)
+	} else if !simple && l.hasView(file) {
 		// A file a view reads: the view says what its prose is, whatever the
 		// file is called. Without this a `.jsonl` or `.log` the section
 		// matched was linted whole, and the view never ran.

@@ -205,17 +205,9 @@ func adocFastPath() []string {
 }
 
 func (l *Linter) lintADoc(f *core.File) error {
-	var html string
-	var err error
-
 	exe := system.Which([]string{"asciidoctor"})
 	if exe == "" {
 		return core.NewE100(f.Path, errors.New("asciidoctor not found; it's needed to read AsciiDoc"))
-	}
-
-	err = l.lintMetadata(f)
-	if err != nil {
-		return err
 	}
 
 	s, err := l.Transform(f)
@@ -224,9 +216,20 @@ func (l *Linter) lintADoc(f *core.File) error {
 	}
 	s = adocSanitizer.Replace(s)
 
-	html, err = l.callAdoc(s, exe, l.Manager.Config.Asciidoctor)
+	html, err := l.callAdoc(s, exe, l.Manager.Config.Asciidoctor)
 	if err != nil {
 		return core.NewE100(f.Path, err)
+	}
+
+	return l.lintADocHTML(f, html)
+}
+
+// lintADocHTML lints a document from Asciidoctor's HTML for it. Source
+// blocks and line comments are masked in the source first, so a match in
+// the HTML can't be placed on them.
+func (l *Linter) lintADocHTML(f *core.File, html string) error {
+	if err := l.lintMetadata(f); err != nil {
+		return err
 	}
 
 	html = adocSanitizer.Replace(html)

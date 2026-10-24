@@ -1,0 +1,15 @@
+= Title
+
+This is very good, see <<setup>> and xref:other.adoc#x[].
+
+// a very hidden comment
+
+[source,python]
+----
+very = 1
+----
+
+[[setup]]
+== Setup
+
+Also very fine.

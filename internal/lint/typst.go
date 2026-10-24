@@ -60,11 +60,6 @@ func (l *Linter) lintTypst(f *core.File) error {
 		return core.NewE100(f.Path, errors.New("typst2vast not found; it's needed to read Typst"))
 	}
 
-	err := l.lintMetadata(f)
-	if err != nil {
-		return err
-	}
-
 	s, err := l.Transform(f)
 	if err != nil {
 		return err
@@ -75,6 +70,14 @@ func (l *Linter) lintTypst(f *core.File) error {
 		return core.NewE100(f.Path, err)
 	}
 
+	return l.lintTypstHTML(f, html)
+}
+
+// lintTypstHTML lints a document from typst2vast's HTML for it.
+func (l *Linter) lintTypstHTML(f *core.File, html string) error {
+	if err := l.lintMetadata(f); err != nil {
+		return err
+	}
 	return l.lintHTMLTokens(f, []byte(html), 0)
 }
 

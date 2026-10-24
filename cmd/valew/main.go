@@ -170,6 +170,92 @@ func ValeLint(_ js.Value, args []js.Value) interface{} {
 	return map[string]interface{}{"result": string(out)}
 }
 
+// ValeLintBuilt(text, format, html, configINI) lints a document the host
+// has already converted to HTML -- AsciiDoc through Asciidoctor.js, XML
+// through XSLTProcessor -- as ValeLint would have after running the
+// converter itself. ValeConverterOptions says what to pass the converter.
+func ValeLintBuilt(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 4 {
+		return errResult("ValeLintBuilt(text, format, html, configINI) requires 4 arguments")
+	}
+
+	text := args[0].String()
+	format := args[1].String()
+	html := args[2].String()
+	configINI := args[3].String()
+
+	cfg, err := core.LoadConfigFromString(configINI)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	linter, err := lint.NewLinter(cfg)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	linted, err := linter.LintBuilt(text, "input."+format, html)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	out, err := core.ToJSON(linted)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	return map[string]interface{}{"result": string(out)}
+}
+
+// ValeConverterOptions(format, configINI) returns what the host must give
+// its converter so the HTML it hands ValeLintBuilt is what Vale would have
+// produced: for `adoc`, Asciidoctor's attributes, safe mode, and the
+// converter class to register; for `rst`, Docutils' flags; for `xml`,
+// xsltproc's parameters.
+func ValeConverterOptions(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 2 {
+		return errResult("ValeConverterOptions(format, configINI) requires 2 arguments")
+	}
+
+	cfg, err := core.LoadConfigFromString(args[1].String())
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	opts, err := lint.ConverterOptions(cfg, args[0].String())
+	if err != nil {
+		return errResult(err.Error())
+	}
+	return toJS(opts)
+}
+
+// toJS converts the string slices and maps a Go API returns into the shapes
+// js.ValueOf accepts, which are only []interface{} and map[string]interface{}.
+func toJS(v interface{}) interface{} {
+	switch t := v.(type) {
+	case []string:
+		out := make([]interface{}, len(t))
+		for i, s := range t {
+			out[i] = s
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]interface{}, len(t))
+		for k, s := range t {
+			out[k] = s
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, item := range t {
+			out[k] = toJS(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 // ValeTransform(text, format, configINI) applies the config's block/token
 // ignore patterns to the text and returns the transformed result. Ignored
 // spans are rewritten as the format's code markup (e.g., backticks / fences),
@@ -212,6 +298,8 @@ func main() {
 
 	g := js.Global()
 	g.Set("ValeLint", js.FuncOf(ValeLint))
+	g.Set("ValeLintBuilt", js.FuncOf(ValeLintBuilt))
+	g.Set("ValeConverterOptions", js.FuncOf(ValeConverterOptions))
 	g.Set("ValeTransform", js.FuncOf(ValeTransform))
 	g.Set("ValeSuggest", js.FuncOf(ValeSuggest))
 	g.Set("ValeAddFile", js.FuncOf(ValeAddFile))

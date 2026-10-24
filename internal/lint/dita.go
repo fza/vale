@@ -97,18 +97,6 @@ func (l *Linter) lintDITA(file *core.File) error {
 	return l.lintDITAHTML(file, data)
 }
 
-// lintDITAHTML lints the toolkit's HTML for file, without its head.
-func (l *Linter) lintDITAHTML(file *core.File, data []byte) error {
-	head1 := bytes.Index(data, []byte("<head>"))
-	head2 := bytes.Index(data, []byte("</head>"))
-
-	if head1 >= 0 && head2 >= 0 {
-		data = append(data[:head1], data[head2:]...)
-	}
-
-	return l.lintHTMLTokens(file, data, 0)
-}
-
 // prepareDITA converts every DITA file the run will lint in one toolkit
 // run, through a map written in their common directory. Starting the
 // toolkit costs more than converting a file, so a run of many files

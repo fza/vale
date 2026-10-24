@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE topic PUBLIC "-//OASIS//DTD DITA Topic//EN" "topic.dtd">
+<topic id="doc">
+  <title>Title</title>
+  <body>
+    <p>This is very good.</p>
+    <codeblock>very = 1</codeblock>
+    <p>Also very fine.</p>
+  </body>
+</topic>

@@ -12,16 +12,6 @@ import (
 	"github.com/vale-cli/vale/v3/internal/system"
 )
 
-// XML configuration.
-var xsltArgs = []string{
-	"--stringparam",
-	"use.extensions",
-	"0",
-	"--stringparam",
-	"generate.toc",
-	"nop",
-}
-
 func (l *Linter) lintXML(file *core.File) error {
 	var out bytes.Buffer
 	var eut bytes.Buffer
