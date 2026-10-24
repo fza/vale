@@ -3,7 +3,6 @@ package spell
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"regexp"
 	"sort"
@@ -1157,22 +1156,6 @@ func (s *goSpell) dottedFirst(word string) bool {
 // hasSharp reports whether word holds a sharp s, in either case.
 func (s *goSpell) hasSharp(word string) bool {
 	return s.affix.CheckSharps && strings.ContainsAny(word, "ßẞ")
-}
-
-// newGoSpell from AFF and DIC Hunspell filenames
-func newGoSpell(fsys system.FS, affFile, dicFile string) (*goSpell, error) {
-	aff, err := fsys.Open(affFile)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open aff: %s", err.Error())
-	}
-	defer aff.Close()
-	dic, err := fsys.Open(dicFile)
-	if err != nil {
-		return nil, fmt.Errorf("unable to open dic: %s", err.Error())
-	}
-	defer dic.Close()
-	h, err := newGoSpellReader(aff, dic)
-	return h, err
 }
 
 // recase returns the one spelling the dictionary has for word in another

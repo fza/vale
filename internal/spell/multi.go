@@ -2,7 +2,9 @@ package spell
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,9 +118,7 @@ func NewCheckerFS(fsys system.FS, options ...CheckerOption) (*Checker, error) {
 	}
 
 	for _, entry := range base.dics {
-		c, err := sharedDictionary(entry.aff+"\x00"+entry.dic, func() (*goSpell, error) {
-			return newGoSpell(fsys, entry.aff, entry.dic)
-		})
+		c, err := sharedDictionaryFS(fsys, entry.aff, entry.dic)
 		if err != nil {
 			return &checker, err
 		}
@@ -179,6 +179,28 @@ var dictionaries sync.Map // key -> *goSpell, pristine
 
 // sharedDictionary returns a checker over the dictionary key names, loading
 // it once.
+// sharedDictionaryFS is sharedDictionary for the dictionary at affPath and
+// dicPath on fsys, keyed by the files' content: two filesystems can hold
+// different dictionaries at the same path, and each gets its own.
+func sharedDictionaryFS(fsys system.FS, affPath, dicPath string) (*goSpell, error) {
+	aff, err := fsys.ReadFile(affPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open aff: %s", err.Error())
+	}
+	dic, err := fsys.ReadFile(dicPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open dic: %s", err.Error())
+	}
+	sum := sha256.New()
+	sum.Write(aff)
+	sum.Write([]byte{0})
+	sum.Write(dic)
+	key := "content\x00" + hex.EncodeToString(sum.Sum(nil))
+	return sharedDictionary(key, func() (*goSpell, error) {
+		return newGoSpellReader(bytes.NewReader(aff), bytes.NewReader(dic))
+	})
+}
+
 func sharedDictionary(key string, load func() (*goSpell, error)) (*goSpell, error) {
 	if pristine, ok := dictionaries.Load(key); ok {
 		return pristine.(*goSpell).fork(), nil //nolint:errcheck // only *goSpell is stored
@@ -326,24 +348,12 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	dic, err := m.fsys().Open(dicPath)
-	if err != nil {
-		return err
-	}
-
 	affPath, err := m.readAsset(name + ".aff")
 	if err != nil {
 		return err
 	}
 
-	aff, err := m.fsys().Open(affPath)
-	if err != nil {
-		return err
-	}
-
-	s, err := sharedDictionary(affPath+"\x00"+dicPath, func() (*goSpell, error) {
-		return newGoSpellReader(aff, dic)
-	})
+	s, err := sharedDictionaryFS(m.fsys(), affPath, dicPath)
 	if err != nil {
 		return err
 	}

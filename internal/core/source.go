@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/errata-ai/ini"
@@ -85,20 +86,78 @@ func FromString(src string, cfg *Config, dry bool) (*ini.File, error) {
 // with its assets resolved against the active filesystem. It is the entry
 // point for a host that has no config file on disk, such as a browser.
 func LoadConfigFromString(src string) (*Config, error) {
-	return LoadConfigFromStringFS(nil, src)
+	return LoadConfigFromStringsFS(nil, src)
 }
 
 // LoadConfigFromStringFS is LoadConfigFromString against a filesystem of its
 // own; nil means system.Default.
 func LoadConfigFromStringFS(fsys system.FS, src string) (*Config, error) {
+	return LoadConfigFromStringsFS(fsys, src)
+}
+
+// LoadConfigFromStrings resolves a project's configuration with earlier
+// layers merged in before it, as the CLI reads the user-level file ahead of
+// the project's: list keys union, and a scalar such as MinAlertLevel favors
+// the project.
+func LoadConfigFromStrings(project string, priors ...string) (*Config, error) {
+	return LoadConfigFromStringsFS(nil, project, priors...)
+}
+
+// LoadConfigFromStringsFS is LoadConfigFromStrings against a filesystem of
+// its own; nil means system.Default.
+func LoadConfigFromStringsFS(fsys system.FS, project string, priors ...string) (*Config, error) {
 	cfg, err := NewConfig(&CLIFlags{FS: fsys})
 	if err != nil {
 		return nil, err
 	}
-	if _, err = FromString(src, cfg, false); err != nil {
+	if _, err = loadStdinSources(project, priors, cfg, false); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// loadStdinSources loads a configuration given as text, with any earlier
+// layers, through the pipeline a file gets: a `.vale-config` directory of
+// package fragments under its StylesPath first, then the layers, then the
+// project's own text, shadow-merged.
+func loadStdinSources(src string, priors []string, cfg *Config, dry bool) (*ini.File, error) {
+	merge := func(lead [][]byte) (*ini.File, error) {
+		sources := []interface{}{}
+		for _, b := range lead {
+			sources = append(sources, b)
+		}
+		for _, p := range priors {
+			sources = append(sources, []byte(p))
+		}
+		sources = append(sources, []byte(src))
+		return shadowLoad(cfg.FS, sources[0], sources[1:]...)
+	}
+
+	uCfg, err := merge(nil)
+	if err != nil {
+		return nil, NewE100("config", err)
+	}
+
+	// The fragments can only be found once StylesPath is known, so a dry
+	// pass resolves it and the sources are then read again with them ahead.
+	if _, perr := processConfig(uCfg, cfg, true); perr == nil {
+		pipeline := filepath.Join(cfg.StylesPath(), PipeDir)
+		if frags, gerr := cfg.FS.Glob(filepath.Join(pipeline, "*")); gerr == nil && len(frags) > 0 {
+			sort.Strings(frags)
+			lead := [][]byte{}
+			for _, f := range frags {
+				if b, rerr := cfg.FS.ReadFile(f); rerr == nil {
+					lead = append(lead, b)
+				}
+			}
+			if len(lead) > 0 {
+				if merged, merr := merge(lead); merr == nil {
+					uCfg = merged
+				}
+			}
+		}
+	}
+	return processConfig(uCfg, cfg, dry)
 }
 
 func validateFlags(cfg *Config) error {

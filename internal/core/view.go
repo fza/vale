@@ -176,14 +176,18 @@ type ScopedValues struct {
 
 // NewView creates a new blueprint from the given path.
 func NewView(path string, fsys system.FS) (*View, error) {
-	var view View
-
 	data, err := fsys.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return NewViewFromString(string(data))
+}
 
-	err = yaml.Unmarshal(data, &view)
+// NewViewFromString parses and validates a View from its YAML text.
+func NewViewFromString(text string) (*View, error) {
+	var view View
+
+	err := yaml.Unmarshal([]byte(text), &view)
 	if err != nil {
 		return nil, err
 	}

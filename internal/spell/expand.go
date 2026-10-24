@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/vale-cli/vale/v3/internal/system"
@@ -45,6 +46,20 @@ func ExpandWith(fsys system.FS, path, word, flags string) ([]string, error) {
 		cached, _ = affixFiles.LoadOrStore(path, aff)
 	}
 	return expandWith(cached.(*dictConfig), filepath.Base(path), word, flags) //nolint:errcheck // only *dictConfig is stored
+}
+
+// ExpandEntry returns the words a dictionary entry, `word` or `word/FLAGS`,
+// generates under the affix file given as text.
+func ExpandEntry(aff, entry string) ([]string, error) {
+	cfg, err := newDictConfig(strings.NewReader(aff))
+	if err != nil {
+		return nil, err
+	}
+	word, flags := entry, ""
+	if i := strings.LastIndex(entry, "/"); i >= 0 {
+		word, flags = entry[:i], entry[i+1:]
+	}
+	return expandWith(cfg, "the affix file", word, flags)
 }
 
 func expandWith(aff *dictConfig, name, word, flags string) ([]string, error) {

@@ -48,6 +48,10 @@ type Runner struct {
 	// configuration over in-memory files tests exactly the files it holds.
 	fs system.FS
 
+	// cfg is a configuration handed in already resolved, by NewRunnerFor;
+	// nil means the one `flags` finds on disk.
+	cfg *core.Config
+
 	// Install puts packages into a StylesPath the way `vale sync` does. With
 	// it, a package's own `Packages` are installed for its isolated cases, so
 	// a rule that extends Std resolves without a synced project.
@@ -121,7 +125,7 @@ func (r *Runner) linterFor(c Case) (*lint.Linter, error) {
 	}
 
 	if r.project == nil {
-		cfg, err := core.ReadPipeline(r.flags, false)
+		cfg, err := r.config()
 		if err != nil {
 			return nil, err
 		}
@@ -141,11 +145,20 @@ func (r *Runner) linterFor(c Case) (*lint.Linter, error) {
 func (r *Runner) searchPaths() []string {
 	if !r.pathsSet {
 		r.pathsSet = true
-		if cfg, err := core.ReadPipeline(r.flags, false); err == nil {
+		if cfg, err := r.config(); err == nil {
 			r.paths = cfg.SearchPaths()
 		}
 	}
 	return r.paths
+}
+
+// config is the project's configuration: the one handed in, or the one
+// `flags` finds on disk.
+func (r *Runner) config() (*core.Config, error) {
+	if r.cfg != nil {
+		return r.cfg, nil
+	}
+	return core.ReadPipeline(r.flags, false)
 }
 
 // isolatedSearch orders the search paths for an isolated case: installed

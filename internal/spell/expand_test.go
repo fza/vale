@@ -64,3 +64,24 @@ func TestExpandWith(t *testing.T) {
 		t.Error("ExpandWith accepted a flag the file doesn't define")
 	}
 }
+
+func TestExpandEntry(t *testing.T) {
+	aff := "SET UTF-8\nSFX S Y 1\nSFX S   0     s      .\nSFX R Y 1\nSFX R   0     er/S   .\n"
+	got, err := ExpandEntry(aff, "deploy/SR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"deploy": true, "deploys": true, "deployer": true, "deployers": true}
+	for _, w := range got {
+		delete(want, w)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing %v in %v", want, got)
+	}
+	if got, err = ExpandEntry(aff, "deploy"); err != nil || len(got) != 1 || got[0] != "deploy" {
+		t.Fatalf("bare entry: %v, %v", got, err)
+	}
+	if _, err = ExpandEntry(aff, "deploy/Q"); err == nil {
+		t.Fatal("an unknown flag should be an error")
+	}
+}

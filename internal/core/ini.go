@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -479,7 +478,12 @@ func expandPaths(file *ini.File, source interface{}) {
 			file.Section("").DeleteKey("StylesPath")
 		}
 	default:
-		path, _ = os.Getwd()
+		// A configuration given as text has no file to resolve against.
+		// Its paths are read as written: an absolute path is itself, and a
+		// relative one is relative to wherever the host's filesystem puts
+		// it, as `StylesPath = styles` over an in-memory filesystem is
+		// `/styles`.
+		return
 	}
 
 	for _, section := range file.Sections() {

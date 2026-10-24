@@ -127,6 +127,13 @@ func Load(path string) ([]Case, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Parse(path, b)
+}
+
+// Parse reads the cases in one file's contents, with Load's rules, for a
+// caller that holds the file already.
+func Parse(path string, b []byte) ([]Case, error) {
+	var err error
 
 	if core.IsTestFile(filepath.Base(path)) {
 		var cases []Case

@@ -348,9 +348,10 @@ func (l *Linter) lintPreparedFile(file *core.File) lintResult {
 func (l *Linter) lintPrepared(file *core.File, built []byte) lintResult {
 	var err error
 
-	if l.runsNothing(file) {
+	if l.BlockHook == nil && l.runsNothing(file) {
 		// No rule can run here -- `BasedOnStyles =` in a section that
-		// matched, say -- so the file isn't parsed at all.
+		// matched, say -- so the file isn't parsed at all. A BlockHook
+		// still wants the block stream, so it always parses.
 		return lintResult{file: file}
 	}
 
