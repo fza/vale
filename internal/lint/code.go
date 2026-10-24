@@ -243,7 +243,7 @@ var docOpener = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*(?:\s*/\s*[A-Za-z_][
 // word `Package` before it.
 var packageOpener = regexp.MustCompile(`^(Package\s+)([A-Za-z_][A-Za-z0-9_]*)(?:[^:\w]|$)`)
 
-// maskDocOpener blanks the word a comment opens with when the declaration
+// maskDocOpener masks the word a comment opens with when the declaration
 // beneath names it, so a documented symbol reads as code rather than as prose.
 // Go, C, Swift and Rust all ask a doc comment to open with the name it
 // documents, and no markup is allowed in that position.
@@ -313,10 +313,14 @@ func maskDocOpener(source []string, comment code.Comment) string {
 // covering the braces and blank lines a declaration puts between its names.
 const blockSlack = 4
 
-// mask blanks a span of a line, leaving its length unchanged so every offset
-// taken before it still lands.
+// mask covers a span of a line with `*`, Markdown's own mask for inline code,
+// leaving its length unchanged so every offset taken before it still lands. A
+// rule's space matches any run of whitespace, so a name blanked to spaces let a
+// pattern join the words on either side of it, `Package` and the verb after
+// the name; a `*` is no space and no word character, so nothing crosses it and
+// nothing counts it as a word.
 func mask(line string, at, width int) string {
-	return line[:at] + strings.Repeat(" ", width) + line[at+width:]
+	return line[:at] + strings.Repeat("*", width) + line[at+width:]
 }
 
 // runNames splits an opening run into its names, with each name's own offset
