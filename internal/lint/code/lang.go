@@ -56,6 +56,12 @@ type Language struct {
 	// interpolate nothing.
 	LiteralText map[string]bool
 
+	// Isolate blanks what a grammar must not read in a file that holds more
+	// than its language: the template and style of a Vue single-file
+	// component around its script blocks. Every byte keeps its position, so
+	// what the grammar reports is already a line and column in the file.
+	Isolate func(source []byte) []byte
+
 	// Directive matches a comment addressed to a tool -- a build constraint,
 	// a linter suppression -- which is dropped rather than read. It is
 	// matched against the comment as written, delimiter included.
@@ -155,6 +161,8 @@ func languageFor(ext string) *Language {
 		return TypeScript()
 	case ".tsx":
 		return Tsx()
+	case ".vue":
+		return Vue()
 	case ".proto":
 		return Protobuf()
 	case ".qml":
