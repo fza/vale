@@ -90,9 +90,18 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 			row := int(c.Node.StartPoint().Row)
 			offset := int(c.Node.StartPoint().Column)
 
+			// What a rule reads of a literal: its source with the code
+			// interpolated into it masked. Source keeps the text as written,
+			// which is what an alert's column is measured against.
+			masked := rText
+			if literal && qe.lang.LiteralText != nil {
+				masked = maskInterpolation(c.Node, source, qe.lang.LiteralText)
+			}
+
 			// The Lua grammar's comment tokens swallow the whitespace --
 			// newlines included -- that precedes them; shift the node past
-			// it so Line and Offset point at the delimiter.
+			// it so Line and Offset point at the delimiter. A heredoc's body
+			// opens with the line break after its opener in the same way.
 			trimmed := strings.TrimLeft(rText, " \t\n")
 			if cut := len(rText) - len(trimmed); cut > 0 {
 				pre := rText[:cut]
@@ -103,17 +112,21 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 					offset += cut
 				}
 				rText = trimmed
+				masked = masked[cut:]
 			}
 
 			// opener is what comes off the front: the first line's Text
-			// begins that far into its Source. A literal loses its opening
-			// quote, a comment whatever stripDelims takes, and bare prose
-			// nothing.
+			// begins that far into its Source. A quoted literal loses its
+			// opening quote, a comment whatever stripDelims takes, and bare
+			// prose -- a heredoc's body among it -- nothing.
 			cText, opener := rText, 0
 			switch {
 			case literal:
-				cText = trimQuotes(rText)
-				opener = (len(rText) - len(cText)) / 2
+				cText = masked
+				if quoted(c.Node) {
+					cText = trimQuotes(masked)
+					opener = (len(rText) - len(trimQuotes(rText))) / 2
+				}
 			case prose:
 			default:
 				cText = qe.stripDelims(rText)
@@ -333,4 +346,68 @@ func trimQuotes(s string) string {
 	}
 
 	return s[1 : len(s)-1]
+}
+
+// quoted reports whether a literal's node carries its quotes at its edges.
+//
+// A heredoc's body is captured without its opener and closing marker, so its
+// first and last characters are content, and a body that opens and closes on
+// a quote would lose both if trimQuotes were asked. A quoted string opens on
+// the quote token itself; a node with no children, Go's raw string among
+// them, is left for trimQuotes to judge by its text.
+func quoted(node *sitter.Node) bool {
+	if node.ChildCount() == 0 {
+		return true
+	}
+
+	return isQuote(node.Child(0))
+}
+
+// maskInterpolation returns a literal's source with every child that is not
+// its own text masked: the variable, the expression and the braces around it
+// that a string interpolates. text names the node types that hold the
+// literal's text; the quote tokens at its edges are left for trimQuotes.
+//
+// Each character becomes a `*` and a line break stays one, as maskCode does
+// for a code span in a comment: a `*` is no space, so no rule pattern crosses
+// it, and no word character, so no rule reads it as a word. The text keeps
+// every line and every column, counted in characters as an alert counts them.
+func maskInterpolation(node *sitter.Node, source []byte, text map[string]bool) string {
+	start := node.StartByte()
+	out := []byte(node.Content(source))
+
+	var b strings.Builder
+	last := 0
+	for i := 0; i < int(node.ChildCount()); i++ {
+		child := node.Child(i)
+		if text[child.Type()] || isQuote(child) {
+			continue
+		}
+
+		lo, hi := int(child.StartByte()-start), int(child.EndByte()-start)
+		b.Write(out[last:lo])
+		b.WriteString(strings.Map(func(r rune) rune {
+			if r == '\n' {
+				return r
+			}
+			return '*'
+		}, string(out[lo:hi])))
+		last = hi
+	}
+	b.Write(out[last:])
+
+	return b.String()
+}
+
+func isQuote(node *sitter.Node) bool {
+	if node.IsNamed() {
+		return false
+	}
+
+	switch node.Type() {
+	case `"`, `'`, "`":
+		return true
+	default:
+		return false
+	}
 }

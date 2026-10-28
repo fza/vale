@@ -9,12 +9,15 @@ import (
 
 func Tsx() *Language {
 	return &Language{
-		Delims:    regexp.MustCompile(`//|/\*|\*/`),
-		Prefix:    cStylePrefix,
-		Parser:    tsx.GetLanguage(),
-		Queries:   []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding:   cStyle,
-		Directive: jsDirective,
-		Doc:       JSDoc,
+		Delims:      regexp.MustCompile(`//|/\*|\*/`),
+		Prefix:      cStylePrefix,
+		Parser:      tsx.GetLanguage(),
+		Queries:     []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Literals:    jsLiterals,
+		SkipLiteral: jsStructuralLiteral,
+		LiteralText: jsLiteralText,
+		Padding:     cStyle,
+		Directive:   jsDirective,
+		Doc:         JSDoc,
 	}
 }

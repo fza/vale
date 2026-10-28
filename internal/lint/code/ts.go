@@ -9,12 +9,15 @@ import (
 
 func TypeScript() *Language {
 	return &Language{
-		Delims:    regexp.MustCompile(`//|/\*|\*/`),
-		Prefix:    cStylePrefix,
-		Parser:    typescript.GetLanguage(),
-		Queries:   []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding:   cStyle,
-		Directive: jsDirective,
-		Doc:       JSDoc,
+		Delims:      regexp.MustCompile(`//|/\*|\*/`),
+		Prefix:      cStylePrefix,
+		Parser:      typescript.GetLanguage(),
+		Queries:     []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Literals:    jsLiterals,
+		SkipLiteral: jsStructuralLiteral,
+		LiteralText: jsLiteralText,
+		Padding:     cStyle,
+		Directive:   jsDirective,
+		Doc:         JSDoc,
 	}
 }
