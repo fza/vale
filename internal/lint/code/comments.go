@@ -192,6 +192,10 @@ func WithLiterals(lang *Language) {
 func GetComments(source []byte, lang *Language) ([]Comment, error) {
 	var comments []Comment
 
+	if lang.Isolate != nil {
+		source = lang.Isolate(source)
+	}
+
 	parser := sitter.NewParser()
 	parser.SetLanguage(lang.Parser)
 
