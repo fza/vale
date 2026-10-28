@@ -633,6 +633,28 @@ cases:
     want: |
       test.js:4:12:T.Prose:'ZQX' in prose
 
+  - name: literal-vue
+    dir: literal
+    about: "a Vue single-file component is code: both script blocks are read
+      with the TypeScript grammar, comments and literals alike, at the lines
+      and columns they hold in the file, while the template and the style
+      reach no rule"
+    args: test.vue
+    exit: 1
+    want: |
+      test.vue:6:12:T.Prose:'ZQX' in prose
+      test.vue:7:25:L.Line:'ZQX' in a one-line literal
+      test.vue:11:25:L.Line:'ZQX' in a one-line literal
+
+  - name: literal-unasked-vue
+    dir: literal-unasked
+    about: "with no rule naming the family, a Vue component's script blocks
+      are read for their comments alone"
+    args: test.vue
+    exit: 1
+    want: |
+      test.vue:6:12:T.Prose:'ZQX' in prose
+
   - name: doc-group
     about: "A `doc(...)` selector may be a comma-separated group at the top
       level, as it may inside `:has(...)`: `doc(blockquote, ul)` names either
