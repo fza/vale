@@ -524,7 +524,7 @@ cases:
     about: "a Go string literal is its own family, so a rule reaches one only
       by naming `literal`, and an import path and a struct tag never reach a
       rule at all"
-    args: .
+    args: test.go
     exit: 1
     want: |
       test.go:5:20:T.Prose:'ZQX' in prose
@@ -535,10 +535,103 @@ cases:
   - name: literal-unasked
     about: "with no rule naming the family, a source file is read exactly as it
       was before literals could be extracted at all"
-    args: .
+    args: test.go
     exit: 1
     want: |
       test.go:5:20:T.Prose:'ZQX' in prose
+
+  - name: literal-php
+    dir: literal
+    about: "a PHP string literal is read under `literal` in every form: single-
+      and double-quoted, heredoc and nowdoc. The code a double-quoted string or
+      a heredoc interpolates is masked, so `{$ZQX}` and `$ZQX` report nothing,
+      while a nowdoc interpolates nothing and keeps `$ZQX` as its text. A
+      require path, an attribute's argument and an array key never reach a
+      rule"
+    args: test.php
+    exit: 1
+    want: |
+      test.php:4:12:T.Prose:'ZQX' in prose
+      test.php:10:37:L.Line:'ZQX' in a one-line literal
+      test.php:11:46:L.Line:'ZQX' in a one-line literal
+      test.php:13:15:L.Block:'ZQX' in a raw literal
+      test.php:14:22:L.Block:'ZQX' in a raw literal
+      test.php:17:20:L.Line:'ZQX' in a one-line literal
+
+  - name: literal-unasked-php
+    dir: literal-unasked
+    about: "with no rule naming the family, a PHP file is read for its comments
+      alone"
+    args: test.php
+    exit: 1
+    want: |
+      test.php:4:12:T.Prose:'ZQX' in prose
+
+  - name: literal-typescript
+    dir: literal
+    about: "a TypeScript string and template literal are read under `literal`,
+      with a template's substitution masked. An import source, a literal type
+      and an object key never reach a rule"
+    args: test.ts
+    exit: 1
+    want: |
+      test.ts:4:12:T.Prose:'ZQX' in prose
+      test.ts:5:35:L.Line:'ZQX' in a one-line literal
+      test.ts:6:48:L.Line:'ZQX' in a one-line literal
+      test.ts:7:19:L.Block:'ZQX' in a raw literal
+      test.ts:8:10:L.Block:'ZQX' in a raw literal
+
+  - name: literal-unasked-typescript
+    dir: literal-unasked
+    about: "with no rule naming the family, a TypeScript file is read for its
+      comments alone"
+    args: test.ts
+    exit: 1
+    want: |
+      test.ts:4:12:T.Prose:'ZQX' in prose
+
+  - name: literal-tsx
+    dir: literal
+    about: "TSX has a grammar of its own and reads literals as TypeScript does"
+    args: test.tsx
+    exit: 1
+    want: |
+      test.tsx:4:12:T.Prose:'ZQX' in prose
+      test.tsx:5:35:L.Line:'ZQX' in a one-line literal
+      test.tsx:6:48:L.Line:'ZQX' in a one-line literal
+      test.tsx:7:19:L.Block:'ZQX' in a raw literal
+      test.tsx:8:10:L.Block:'ZQX' in a raw literal
+
+  - name: literal-unasked-tsx
+    dir: literal-unasked
+    about: "with no rule naming the family, a TSX file is read for its comments
+      alone"
+    args: test.tsx
+    exit: 1
+    want: |
+      test.tsx:4:12:T.Prose:'ZQX' in prose
+
+  - name: literal-javascript
+    dir: literal
+    about: "JavaScript shares TypeScript's string nodes and reads literals the
+      same way"
+    args: test.js
+    exit: 1
+    want: |
+      test.js:4:12:T.Prose:'ZQX' in prose
+      test.js:5:35:L.Line:'ZQX' in a one-line literal
+      test.js:6:48:L.Line:'ZQX' in a one-line literal
+      test.js:7:19:L.Block:'ZQX' in a raw literal
+      test.js:8:10:L.Block:'ZQX' in a raw literal
+
+  - name: literal-unasked-javascript
+    dir: literal-unasked
+    about: "with no rule naming the family, a JavaScript file is read for its
+      comments alone"
+    args: test.js
+    exit: 1
+    want: |
+      test.js:4:12:T.Prose:'ZQX' in prose
 
   - name: doc-group
     about: "A `doc(...)` selector may be a comma-separated group at the top
