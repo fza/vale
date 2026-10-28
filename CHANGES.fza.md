@@ -24,10 +24,11 @@ consumer.
 | `.vale.ini` in any directory | Configuration | Glob sections covering that directory and the tree beneath it. |
 | `cache-clean` | CLI command | Remove every cached result, reporting how much was reclaimed. |
 | `VALE_CACHE` | Environment variable | Where to store the alerts of unchanged files. |
-| `scope: literal` | Rule scope | Match a string literal. Also `literal.line` and `literal.block`. |
+| `scope: literal` | Rule scope | Match a string literal in Go, PHP, TypeScript, TSX, JavaScript or a Vue component's script. Also `literal.line` and `literal.block`. |
 | `<vale off>` … `</vale off>` | Directive | The tag form of a `vale` directive, in markup and in a source comment alike. |
 | `.sh`, `.bash`, `.zsh`, `.ksh` | Format | Read as code: only the comments are prose. |
 | `.mk`, `.mak`, `.make`, `Makefile`, `makefile`, `GNUmakefile` | Format | Read as code: only the comments are prose. |
+| `.vue` | Format | Read as code: the script blocks alone, with the TypeScript grammar. The template and the style reach no rule. |
 
 ## Correctness
 
@@ -229,6 +230,98 @@ so a raw string's later lines map back through the dedent alone.
 - `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`, `code.WithLiterals` gated on `Manager.HasScope`.
 - `internal/lint/fragment.go` — a literal skipped on the markup path, which would rebuild it under `text`.
 - `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
+
+### A PHP, TypeScript and JavaScript string literal is read as Go's is
+
+An exception's message, a log line and a command's output are written as
+string literals, in PHP and TypeScript as much as in Go, and only Go's reached
+a rule. PHP, TypeScript, TSX and JavaScript now report theirs under the same
+`literal` family, extracted under the same condition: only where a rule names
+it. PHP reads single- and double-quoted strings, heredocs and nowdocs; the
+others read single- and double-quoted strings and template literals.
+
+A heredoc and a nowdoc are captured by their body, so the opener and the
+closing marker never reach a rule, and the line break after the opener moves
+the literal's first line down, as the whitespace before a Lua comment does.
+A body is content to its edges, so a quote opening or closing it stays; the
+quote comes off only a node that opens on a quote token.
+
+What a string interpolates is code: `$order`, `{$order->id}`, `${count}`.
+Every child of a literal that is not its own text is masked with one `*` per
+character, as a code span in a comment is ("Masked comment text is a run no
+rule crosses" says why `*`), so the sentence around it still reads and every
+column stays. A nowdoc interpolates nothing, so a `$` in one is its text. An
+escape keeps its written width, as Go's always did.
+
+A format placeholder is not masked. The consumer's `House.Literals` rules
+report the same alerts on a Go string holding `%s`, `%d`, `%w`, `%1$s` and `%q`
+as on the same string with each placeholder masked: a placeholder is no space,
+so nothing crosses it, and no rule reads it as a word.
+
+Each language drops the strings its syntax marks as structural, as Go drops an
+import path and a struct tag, judged by position alone:
+
+- PHP: an attribute's argument (`#[Flow\Scope('singleton')]`,
+  `#[ORM\Column(type: 'string')]`), an array key, written in a literal or read
+  through a subscript, and the path an `include` or `require` loads.
+- TypeScript, TSX and JavaScript: the module an `import` or `export` names or a
+  dynamic `import()` loads, an ambient `declare module '...'`, a literal type
+  (`type Role = 'auditor' | 'admin'`), the key of an object, an interface, a
+  class member or an enum member, a subscript's key, and a directive such as
+  `'use strict'`.
+
+Rejected:
+
+- Masking format placeholders: no rule the consumer runs trips on one, so a
+  mask would change no alert and leave a pattern to keep right for every
+  `printf` dialect.
+- Skipping a `require('...')` argument: only the callee's name tells it from any
+  other call, which is content rather than position, so it stays in for the
+  consumer to carve out by directive, as everything told apart by content does.
+- Skipping an enum member's value or a JSX attribute's string: either may be
+  copy a person reads, and only the content says which.
+- Reading a heredoc's whole node: its opener and closing marker would be prose.
+
+Accepted cost: a JSX attribute holding a class name or an identifier reaches a
+`literal` rule, as a Go map value holding one does.
+
+- `internal/lint/code/lang.go` -- `Language.LiteralText`.
+- `internal/lint/code/query.go` -- `maskInterpolation`, `quoted`, `isQuote`; the masked text trimmed with its source.
+- `internal/lint/code/php.go` -- the literal queries, `phpStructuralLiteral`, `isArrayKey`, `sameNode`.
+- `internal/lint/code/js.go` -- `jsLiterals`, `jsLiteralText`, `jsStructuralLiteral`, shared by `ts.go` and `tsx.go`.
+- `internal/lint/code/literal_lang_test.go`, with fixtures under `internal/lint/code/testdata/literal/`; `testdata/e2e/scopes.yaml` cases `literal-php`, `literal-typescript`, `literal-tsx`, `literal-javascript` and a `literal-unasked-*` case for each, with fixtures under `testdata/fixtures/scopes/`.
+
+### A Vue single-file component is parsed as code
+
+A `.vue` file matched no format, so Vale read it whole as plain text: template
+copy, script comments and style alike. It is now code. Every `<script>` block,
+`<script setup>` among them and both where one file holds the two, is read with
+the TypeScript grammar, which reads plain JavaScript as well: comments, and
+literals where a rule names the family. The template and the style reach no
+rule.
+
+The file is handed to the grammar with everything outside its script blocks'
+contents blanked to spaces, line breaks kept, so every node the grammar reports
+already stands at its line and column in the component, and no alert needs
+mapping back. A block opens at the start of a line, as a component's top-level
+blocks do, and ends at the first closing tag, where a browser ends one; a
+script loaded through `src` closes its own tag and holds nothing.
+
+Rejected:
+
+- Reading `<template>` as markup: an interface's copy is written in the
+  language the interface speaks, which need not be the language the rules are
+  written for, and it stays unlinted.
+- A Vue grammar: the tree-sitter module the fork builds against carries none,
+  and a grammar would hand back each block as an embedded range to map anyway.
+- Cutting each script block out and offsetting its alerts: a second coordinate
+  system for every alert, where blanking keeps one.
+
+- `internal/core/format.go` -- `.vue` mapped to code.
+- `internal/lint/code/lang.go` -- `Language.Isolate`, and `.vue` in `languageFor`.
+- `internal/lint/code/vue.go` -- `Vue`, `vueScripts`, `vueScript`, `vueScriptEnd`.
+- `internal/lint/code/comments.go` -- `Isolate` applied before the parse in `GetComments`.
+- `internal/core/util_test.go` -- `TestFormatFromExt`; `internal/lint/code/vue_test.go`, with fixtures under `internal/lint/code/testdata/vue/`; `testdata/e2e/scopes.yaml` cases `literal-vue` and `literal-unasked-vue`.
 
 ### A directory carries its own configuration
 
