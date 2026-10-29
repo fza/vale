@@ -283,7 +283,7 @@ func (f *cacheFixture) saltFor(edit func(*core.Config)) string {
 	cfg.AddStylesPath(f.styles)
 	edit(cfg)
 
-	salt, err := cacheSalt(cfg, "v1")
+	salt, err := cacheSalt(cfg, "v1", cacheRoot(cfg))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -396,5 +396,113 @@ func TestEveryFlagIsClassified(t *testing.T) {
 			t.Errorf("flag %q is not classified: decide whether it changes "+
 				"which alerts exist, and add it to cacheSalt if it does", name)
 		}
+	}
+}
+
+// checkout writes one project -- a configuration, a style and a document --
+// under a fresh directory, as each worktree of one tree holds it.
+func checkout(t *testing.T, token, extraConfig string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	files := map[string]string{
+		".vale.ini":             "StylesPath = styles\nMinAlertLevel = suggestion\n" + extraConfig + "\n[*.md]\nBasedOnStyles = Demo\n",
+		"styles/Demo/Wordy.yml": "extends: existence\nmessage: \"Avoid '%s'.\"\nlevel: warning\ntokens:\n  - " + token + "\n",
+		"docs/doc.md":           "This is obviously wrong.\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return root
+}
+
+// projectLinter reads root's configuration and caches into dir.
+func projectLinter(t *testing.T, root, dir string) *Linter {
+	t.Helper()
+
+	cfg, err := core.ReadPipeline(&core.CLIFlags{Path: filepath.Join(root, ".vale.ini"), IgnoreGlobal: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linter, err := NewLinter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = linter.EnableCache(dir, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { linter.CloseCache(nil) })
+
+	return linter
+}
+
+// sharedWith lints the first checkout's document, then reports whether the
+// second checkout's linter finds an entry for its own copy.
+func sharedWith(t *testing.T, first, second string) bool {
+	t.Helper()
+
+	dir := t.TempDir()
+	if _, err := projectLinter(t, first, dir).Lint([]string{filepath.Join(first, "docs", "doc.md")}, "*"); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := filepath.Join(second, "docs", "doc.md")
+	content, err := os.ReadFile(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := projectLinter(t, second, dir)
+	_, found := l.cache.Get(l.cacheKey(doc, content))
+
+	return found
+}
+
+// Two checkouts of one tree are one project wherever they sit, so the second
+// starts with the first one's entries.
+func TestCheckoutsOfOneTreeShareEntries(t *testing.T) {
+	first := checkout(t, "obviously", "")
+	second := checkout(t, "obviously", "")
+
+	if !sharedWith(t, first, second) {
+		t.Fatal("a second checkout of the same tree should find the first one's entries")
+	}
+}
+
+func TestCheckoutsWithOtherStylesDoNotShare(t *testing.T) {
+	first := checkout(t, "obviously", "")
+	second := checkout(t, "definitely", "")
+
+	if sharedWith(t, first, second) {
+		t.Fatal("checkouts whose styles differ should not share entries")
+	}
+}
+
+func TestCheckoutsWithOtherConfigurationDoNotShare(t *testing.T) {
+	first := checkout(t, "obviously", "")
+	second := checkout(t, "obviously", "IgnoredScopes = code\n")
+
+	if sharedWith(t, first, second) {
+		t.Fatal("checkouts whose configuration differs should not share entries")
+	}
+}
+
+// A section that names an absolute path outside the project applies in one
+// place only, so the cache falls back to absolute addresses.
+func TestAbsoluteSectionKeepsCheckoutsApart(t *testing.T) {
+	elsewhere := filepath.ToSlash(filepath.Join(t.TempDir(), "*.md"))
+	extra := "\n[" + elsewhere + "]\nBasedOnStyles = Demo\n"
+
+	first := checkout(t, "obviously", extra)
+	second := checkout(t, "obviously", extra)
+
+	if sharedWith(t, first, second) {
+		t.Fatal("checkouts with a section outside the project should not share entries")
 	}
 }
