@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,9 +14,9 @@ import (
 )
 
 const (
-	// sweepChunk is how many records a merge writes, or how many files a
-	// deletion removes, between two looks at the clock. A sweep always does at
-	// least one chunk, so upkeep advances however short the budget.
+	// sweepChunk is how many records a merge writes between two looks at the
+	// clock. A merge always writes at least one chunk, so it advances however
+	// short the budget.
 	sweepChunk = 256
 
 	trashPrefix = "trash-"
@@ -26,10 +25,14 @@ const (
 	tempExt     = ".tmp"
 )
 
-// Sweep does the cache's upkeep for about budget: it deletes the segments of
-// epochs gone by, merges an epoch's smallest segments once it holds too many,
-// and removes what interrupted runs and earlier layouts of the cache left
-// behind. Work that does not fit is resumed by the next Sweep.
+// Sweep does the cache's upkeep: it deletes the segments of epochs gone by,
+// removes what interrupted runs and earlier layouts of the cache left behind,
+// and merges an epoch's smallest segments once it holds too many. The merge
+// stops after about budget and is resumed by the next Sweep.
+//
+// The one-file-per-entry layout of earlier builds is deleted in full by the
+// first sweep that finds it, whatever the budget: one run waits for it once,
+// rather than every run spending its budget on it until it is gone.
 //
 // One process sweeps at a time. A run that finds another one sweeping, or
 // nothing to do, returns at once.
@@ -47,14 +50,10 @@ func (c *Cache) Sweep(budget time.Duration) {
 	}
 	defer claim.release()
 
-	deadline := time.Now().Add(budget)
-
 	c.dropExpired()
-	if !c.merge(deadline) {
-		return
-	}
 	c.collectStrays()
-	c.emptyTrash(deadline)
+	c.emptyTrash()
+	c.merge(time.Now().Add(budget))
 }
 
 // sweepDue reports whether a sweep would find anything to do. It costs a read
@@ -184,11 +183,11 @@ type mergeState struct {
 	LastIndexed int64 `json:"last_indexed"`
 }
 
-// merge runs or resumes a merge, reporting whether time is left after it.
-func (c *Cache) merge(deadline time.Time) bool {
+// merge runs or resumes a merge until it finishes or the deadline passes.
+func (c *Cache) merge(deadline time.Time) {
 	m, err := readManifest(c.dir)
 	if err != nil {
-		return false
+		return
 	}
 
 	state := c.readMergeState()
@@ -200,19 +199,12 @@ func (c *Cache) merge(deadline time.Time) bool {
 		state = c.planMerge(m)
 	}
 	if state == nil {
-		return true
+		return
 	}
 
-	finished, err := c.mergeChunks(state, deadline)
-	switch {
-	case err != nil:
+	if _, err = c.mergeChunks(state, deadline); err != nil {
 		c.discardMerge(state)
-		return true
-	case !finished:
-		return false
 	}
-
-	return time.Now().Before(deadline)
 }
 
 // planMerge picks the smallest segments of the first epoch holding more than
@@ -564,52 +556,17 @@ func isStrayName(name string) bool {
 	return name == mergeName || name == "trim.txt"
 }
 
-// emptyTrash deletes the contents of the trash directories until the deadline,
-// at least one chunk of files per sweep.
-func (c *Cache) emptyTrash(deadline time.Time) {
+// emptyTrash deletes the directories moved aside for deletion, with
+// everything in them.
+func (c *Cache) emptyTrash() {
 	entries, err := os.ReadDir(c.dir)
 	if err != nil {
 		return
 	}
 
-	first := true
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), trashPrefix) {
-			continue
-		}
-
-		dir := filepath.Join(c.dir, entry.Name())
-		for {
-			if !first && time.Now().After(deadline) {
-				return
-			}
-			first = false
-
-			if !removeChunk(dir) {
-				break
-			}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), trashPrefix) {
+			os.RemoveAll(filepath.Join(c.dir, entry.Name()))
 		}
 	}
-}
-
-// removeChunk removes up to sweepChunk entries from dir, and dir itself once
-// it is empty, reporting whether anything is left.
-func removeChunk(dir string) bool {
-	f, err := os.Open(dir)
-	if err != nil {
-		return false
-	}
-
-	names, err := f.Readdirnames(sweepChunk)
-	f.Close()
-	if errors.Is(err, io.EOF) || (err == nil && len(names) == 0) {
-		os.Remove(dir)
-		return false
-	}
-
-	for _, name := range names {
-		os.RemoveAll(filepath.Join(dir, name))
-	}
-
-	return true
 }
