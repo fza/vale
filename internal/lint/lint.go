@@ -200,6 +200,9 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	// called again on the same Linter, so the next run starts its own.
 	defer l.stopExternal()
 
+	// What the run stored is written once, when it ends, rather than once a file.
+	defer l.flushCache()
+
 	l.prepareDITA(input)
 	defer func() { l.ditaHTML = nil }()
 
