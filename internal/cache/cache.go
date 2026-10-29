@@ -1,42 +1,70 @@
 // Package cache remembers what Vale reported for a file, so that a file which
 // has not changed need not be linted again.
 //
-// The design follows the Go build cache: entries are addressed by a hash of
-// everything that could change the answer, each lives in its own file, and
-// nothing indexes them. A missing, truncated or unreadable entry is a miss, so
-// an interrupted write or a half-deleted directory costs a re-lint and never a
+// Entries are addressed by a hash of everything that could change the answer,
+// and they live in a handful of files however many there are: an append log
+// (the tail) that every run adds to, and sorted read-only segments the tail is
+// sealed into once it grows. A manifest lists the segments. Many Vale
+// processes share one cache at a time: writers take turns on a lock for the
+// few milliseconds an append, a seal or a manifest swap takes, and readers
+// take no lock at all.
+//
+// Every record carries a checksum. A record that is cut short, damaged or
+// unreadable is a miss, so an interrupted write costs a re-lint and never a
 // wrong result.
 //
-// Eviction is by last use rather than by size. Reading an entry touches its
-// modification time, at most once an hour so that a run does not rewrite
-// metadata for every file it reads, and a sweep deletes whatever has gone
-// unused for five days. The sweep runs at most once a day, which one marker
-// file records.
+// Eviction is by last use, counted in epochs of a few days. A record lives in
+// the epoch it was written in; a hit on one from the previous epoch writes it
+// again in the current one, and segments older than the previous epoch are
+// deleted whole. An entry nobody reads is gone after one to two epochs.
+//
+// Upkeep -- deleting old segments, merging small ones, removing what an
+// interrupted run or an older layout left behind -- is done by Sweep, which
+// one process at a time claims and which stops after a fixed budget and
+// resumes on the next run. Opening the cache never sweeps.
 package cache
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
-// shards is how many directories the entries are spread over, one per leading
-// byte of the key.
-const shards = 256
+const (
+	epochLength = 3 * 24 * time.Hour
+
+	// sealBytes is the tail size past which it is sealed into a segment. Every
+	// run reads the whole tail, so it is kept small.
+	sealBytes = 1 << 20
+
+	// maxSegments is how many segments an epoch holds before a sweep merges
+	// the smallest of them.
+	maxSegments = 8
+
+	// SweepBudget bounds the time one run spends on upkeep. A merge or a
+	// deletion that needs longer is resumed by the next run.
+	SweepBudget = 200 * time.Millisecond
+)
 
 const (
-	mtimeInterval = 1 * time.Hour
-	trimInterval  = 24 * time.Hour
-	trimLimit     = 5 * 24 * time.Hour
+	manifestName = "manifest"
+	tailName     = "tail"
+	lockName     = "lock"
+	sweepName    = "sweep.lock"
+	mergeName    = "merge.json"
 )
 
 // EnvVar names the directory to store entries in, overriding the default.
 const EnvVar = "VALE_CACHE"
+
+// errUnknownFormat marks a cache written by a build whose layout this one does
+// not read. Such a cache is left alone rather than overwritten.
+var errUnknownFormat = errors.New("unknown cache format")
 
 // Key addresses one entry.
 type Key [sha256.Size]byte
@@ -49,6 +77,17 @@ type Cache struct {
 	dir  string
 	salt []byte
 	now  func() time.Time
+
+	sealBytes   int
+	maxSegments int
+
+	loadOnce sync.Once
+	stored   *snapshot
+
+	mu       sync.Mutex
+	pending  []record
+	recorded map[Key][]byte
+	disabled bool
 }
 
 // Dir reports where entries are stored.
@@ -75,38 +114,14 @@ func Open(dir string, salt []byte) (*Cache, error) {
 		return nil, err
 	}
 
-	// Every shard is created up front. Creating one on demand meant a stat
-	// for every entry written, which on a first run over a large tree is one
-	// system call per file for a directory that already exists.
-	for i := range shards {
-		if err := os.MkdirAll(filepath.Join(dir, shardName(i)), 0o750); err != nil {
-			return nil, err
-		}
-	}
-
-	c := &Cache{dir: dir, salt: salt, now: time.Now}
-	c.trim()
-
-	return c, nil
-}
-
-// Clean removes every entry.
-func Clean(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-
-	for _, entry := range entries {
-		if rmErr := os.RemoveAll(filepath.Join(dir, entry.Name())); rmErr != nil {
-			return rmErr
-		}
-	}
-
-	return nil
+	return &Cache{
+		dir:         dir,
+		salt:        salt,
+		now:         time.Now,
+		sealBytes:   sealBytes,
+		maxSegments: maxSegments,
+		recorded:    map[Key][]byte{},
+	}, nil
 }
 
 // Size reports how many bytes the entries occupy.
@@ -147,100 +162,164 @@ func (c *Cache) Key(parts ...[]byte) Key {
 
 // Get returns the entry stored under key, reporting whether one was found.
 func (c *Cache) Get(key Key) ([]byte, bool) {
-	name := c.fileName(key)
+	c.mu.Lock()
+	data, found := c.recorded[key]
+	c.mu.Unlock()
+	if found {
+		return data, true
+	}
 
-	data, err := os.ReadFile(name)
-	if err != nil {
+	c.loadOnce.Do(c.load)
+	if c.stored == nil {
 		return nil, false
 	}
-	c.markUsed(name)
+
+	current := c.epoch()
+	data, written, found := c.stored.find(key, current-1)
+	if !found {
+		return nil, false
+	}
+
+	// A hit from the previous epoch is written again, so that an entry in use
+	// outlives the segment it was first stored in.
+	if written < current {
+		c.record(key, data)
+	}
 
 	return data, true
 }
 
-// Put stores data under key, reporting nothing: a cache that cannot be written
-// is a cache that does not hit.
+// Put stores data under key. It is written by the next Flush.
 func (c *Cache) Put(key Key, data []byte) {
-	name := c.fileName(key)
+	c.record(key, append([]byte(nil), data...))
+}
 
-	// Written beside its destination and renamed, so that a reader sees either
-	// the whole entry or none of it. A run interrupted mid-write leaves a
-	// temporary file, which the sweep collects like any other.
-	f, err := os.CreateTemp(filepath.Dir(name), "tmp-")
+// Flush writes every entry stored since the last Flush, sealing the tail into
+// a segment once it has grown past its limit.
+func (c *Cache) Flush() {
+	c.mu.Lock()
+	batch := c.pending
+	c.pending = nil
+	disabled := c.disabled
+	c.mu.Unlock()
+
+	if len(batch) == 0 || disabled {
+		return
+	}
+
+	use, err := useLayout(c.dir, layoutPacked)
 	if err != nil {
 		return
 	}
+	defer use.release()
 
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return
-	}
-	if err = f.Close(); err != nil {
-		os.Remove(f.Name())
-		return
-	}
-
-	if err = os.Rename(f.Name(), name); err != nil {
-		os.Remove(f.Name())
-	}
-}
-
-// fileName returns the path holding key, sharded by its first byte so that no
-// one directory holds every entry.
-func (c *Cache) fileName(key Key) string {
-	name := hex.EncodeToString(key[:])
-	return filepath.Join(c.dir, name[:2], name)
-}
-
-// markUsed records that name was read, at most once per mtimeInterval.
-func (c *Cache) markUsed(name string) {
-	info, err := os.Stat(name)
+	lock, err := acquire(filepath.Join(c.dir, lockName))
 	if err != nil {
 		return
 	}
+	defer lock.release()
 
-	if now := c.now(); now.Sub(info.ModTime()) >= mtimeInterval {
-		os.Chtimes(name, now, now)
+	if _, err = readManifest(c.dir); err == nil {
+		err = c.appendTail(batch)
+	}
+	if errors.Is(err, errUnknownFormat) {
+		c.disable()
 	}
 }
 
-// trim deletes entries unused for trimLimit, at most once per trimInterval.
-func (c *Cache) trim() {
-	now := c.now()
-	marker := filepath.Join(c.dir, "trim.txt")
-
-	if info, err := os.Stat(marker); err == nil {
-		if since := now.Sub(info.ModTime()); since < trimInterval && since > -mtimeInterval {
-			return
-		}
+// Close releases the segments the cache has open.
+func (c *Cache) Close() {
+	c.loadOnce.Do(func() {})
+	if c.stored != nil {
+		c.stored.close()
 	}
-
-	cutoff := now.Add(-trimLimit - mtimeInterval)
-	for i := range shards {
-		c.trimSubdir(filepath.Join(c.dir, shardName(i)), cutoff)
-	}
-
-	// The marker is written last, so a sweep that dies part way through is
-	// repeated rather than skipped for a day.
-	os.WriteFile(marker, []byte(now.Format(time.RFC3339)+"\n"), 0o600)
 }
 
-func (c *Cache) trimSubdir(dir string, cutoff time.Time) {
-	entries, err := os.ReadDir(dir)
+func (c *Cache) record(key Key, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.recorded[key] = data
+	c.pending = append(c.pending, record{key: key, data: data})
+}
+
+func (c *Cache) disable() {
+	c.mu.Lock()
+	c.disabled = true
+	c.mu.Unlock()
+}
+
+// load reads the tail and opens the segments the manifest lists.
+//
+// The tail is read first. A seal writes the segment and the manifest before it
+// empties the tail, so whichever side of a seal the two reads fall on, every
+// record is in one of them.
+func (c *Cache) load() {
+	use, err := useLayout(c.dir, layoutPacked)
 	if err != nil {
+		c.disable()
+		return
+	}
+	defer use.release()
+
+	tail, err := readTail(filepath.Join(c.dir, tailName))
+	if errors.Is(err, errUnknownFormat) {
+		c.disable()
 		return
 	}
 
-	for _, entry := range entries {
-		info, infoErr := entry.Info()
-		if infoErr != nil || info.ModTime().After(cutoff) {
+	segments, err := openSegments(c.dir)
+	if err != nil {
+		c.disable()
+		return
+	}
+
+	c.stored = &snapshot{tail: tail, segments: segments}
+}
+
+// epoch is the epoch the cache's clock is in.
+func (c *Cache) epoch() uint32 {
+	return epochAt(c.now())
+}
+
+func epochAt(t time.Time) uint32 {
+	return uint32(t.Unix() / int64(epochLength/time.Second))
+}
+
+// record is one entry on its way to the tail.
+type record struct {
+	key  Key
+	data []byte
+}
+
+// snapshot is what the cache held when a run first looked.
+type snapshot struct {
+	tail     map[Key]tailEntry
+	segments []*segment
+}
+
+// find returns the entry under key from the newest place that holds it,
+// ignoring anything written before oldest.
+func (s *snapshot) find(key Key, oldest uint32) ([]byte, uint32, bool) {
+	if entry, found := s.tail[key]; found && entry.epoch >= oldest {
+		return entry.data, entry.epoch, true
+	}
+
+	for i := len(s.segments) - 1; i >= 0; i-- {
+		seg := s.segments[i]
+		if seg.epoch < oldest {
 			continue
 		}
-		os.Remove(filepath.Join(dir, entry.Name()))
+		if data, found := seg.find(key); found {
+			return data, seg.epoch, true
+		}
 	}
+
+	return nil, 0, false
 }
 
-func shardName(i int) string {
-	return fmt.Sprintf("%02x", i)
+func (s *snapshot) close() {
+	for _, seg := range s.segments {
+		seg.close()
+	}
 }

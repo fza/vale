@@ -198,6 +198,7 @@ func main() {
 		for _, e := range docErrs {
 			ShowError(e, Flags.Output, os.Stderr)
 		}
+		linter.CloseCache(startOldLayoutClean)
 		stopProfiling()
 		switch {
 		case len(docErrs) > 0:

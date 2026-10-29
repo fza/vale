@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vale-cli/vale/v3/internal/cache"
 	"github.com/vale-cli/vale/v3/internal/core"
 )
 
@@ -99,22 +100,33 @@ func (f *cacheFixture) lint(l *Linter, path string) []string {
 	return out
 }
 
-func (f *cacheFixture) entries() int {
+// stored reports whether a linter of version finds an entry for path as it is
+// now.
+func (f *cacheFixture) stored(version, path string) bool {
 	f.t.Helper()
 
-	count := 0
-	err := filepath.Walk(f.cache, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || filepath.Base(path) == "trim.txt" {
-			return nil //nolint:nilerr // counting, not reading
-		}
-		count++
-		return nil
-	})
+	content, err := os.ReadFile(path)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 
-	return count
+	l := f.linter(version)
+	defer l.CloseCache(nil)
+
+	_, found := l.cache.Get(l.cacheKey(path, content))
+	return found
+}
+
+// empty reports whether nothing has been written to the cache directory.
+func (f *cacheFixture) empty() bool {
+	f.t.Helper()
+
+	size, err := cache.Size(f.cache)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+
+	return size == 0
 }
 
 // A cached answer is the answer the file would have produced.
@@ -131,8 +143,8 @@ func TestCachedRunMatchesUncachedRun(t *testing.T) {
 	if strings.Join(warm, "|") != strings.Join(cold, "|") {
 		t.Fatalf("warm = %v, cold = %v", warm, cold)
 	}
-	if f.entries() != 1 {
-		t.Fatalf("stored %d entries, want 1", f.entries())
+	if !f.stored("v1", path) {
+		t.Fatal("the run should have stored the file's alerts")
 	}
 }
 
@@ -149,7 +161,7 @@ func TestUnreadableFileIsLintedAsUncached(t *testing.T) {
 	}
 
 	f.lint(f.linter("v1"), path)
-	if f.entries() != 0 {
+	if !f.empty() {
 		t.Error("an unreadable file should leave no cache entry behind")
 	}
 }
@@ -181,10 +193,13 @@ func TestPathIsPartOfTheKey(t *testing.T) {
 	second := f.write(dir, "two.md", body)
 
 	f.lint(f.linter("v1"), first)
-	f.lint(f.linter("v1"), second)
+	if f.stored("v1", second) {
+		t.Fatal("the same bytes under another name should not be found")
+	}
 
-	if f.entries() != 2 {
-		t.Fatalf("stored %d entries, want 2", f.entries())
+	f.lint(f.linter("v1"), second)
+	if !f.stored("v1", first) || !f.stored("v1", second) {
+		t.Fatal("each name should have an entry of its own")
 	}
 }
 
@@ -210,10 +225,13 @@ func TestVersionInvalidatesTheCache(t *testing.T) {
 	path := f.write(t.TempDir(), "doc.md", "This is obviously wrong.\n")
 
 	f.lint(f.linter("v1"), path)
-	f.lint(f.linter("v2"), path)
+	if f.stored("v2", path) {
+		t.Fatal("another version should not read what this one wrote")
+	}
 
-	if f.entries() != 2 {
-		t.Fatalf("stored %d entries, want 2", f.entries())
+	f.lint(f.linter("v2"), path)
+	if !f.stored("v1", path) || !f.stored("v2", path) {
+		t.Fatal("each version should have an entry of its own")
 	}
 }
 
@@ -249,8 +267,8 @@ func TestUncachedLinterStoresNothing(t *testing.T) {
 
 	f.lint(f.linter(""), path)
 
-	if f.entries() != 0 {
-		t.Fatalf("stored %d entries, want 0", f.entries())
+	if !f.empty() {
+		t.Fatal("an uncached linter should write nothing")
 	}
 }
 
