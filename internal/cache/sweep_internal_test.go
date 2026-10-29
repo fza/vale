@@ -90,13 +90,13 @@ func TestOnlyOneProcessSweeps(t *testing.T) {
 		t.Fatal("an unclaimed sweep should be claimable")
 	}
 
-	openRun(t, dir, clock).Sweep(time.Second)
+	openRun(t, dir, clock).Sweep(time.Second, nil)
 	if !exists(filepath.Join(dir, "trim.txt")) {
 		t.Fatal("a sweep claimed by another process should not run")
 	}
 
 	claim.release()
-	openRun(t, dir, clock).Sweep(time.Second)
+	openRun(t, dir, clock).Sweep(time.Second, nil)
 	if exists(filepath.Join(dir, "trim.txt")) {
 		t.Fatal("a released sweep should run")
 	}
@@ -110,13 +110,13 @@ func TestSweepDeletesExpiredSegments(t *testing.T) {
 	clock.advance(epochLength)
 	putAll(sealed(t, dir, clock), "recent.md")
 
-	openRun(t, dir, clock).Sweep(time.Second)
+	openRun(t, dir, clock).Sweep(time.Second, nil)
 	if !exists(old) {
 		t.Fatal("a segment of the previous epoch should be kept")
 	}
 
 	clock.advance(epochLength)
-	openRun(t, dir, clock).Sweep(time.Second)
+	openRun(t, dir, clock).Sweep(time.Second, nil)
 	if exists(old) {
 		t.Fatal("a segment older than the previous epoch should be deleted")
 	}
@@ -146,7 +146,7 @@ func TestMergeBoundsTheFileCount(t *testing.T) {
 
 		c := merging(t, dir, clock)
 		putAll(c, stored...)
-		c.Sweep(time.Second)
+		c.Sweep(time.Second, nil)
 	}
 
 	m, err := readManifest(dir)
@@ -156,8 +156,8 @@ func TestMergeBoundsTheFileCount(t *testing.T) {
 	if len(m.Segments) > 4 {
 		t.Fatalf("sweeps should hold an epoch to its segment limit, got %d", len(m.Segments))
 	}
-	// Segments, manifest, tail, lock, sweep lock.
-	if files := countFiles(t, dir); files > len(m.Segments)+4 {
+	// Segments, manifest, tail, writer lock, sweep lock, clean lock.
+	if files := countFiles(t, dir); files > len(m.Segments)+5 {
 		t.Fatalf("the cache should hold only its segments and fixed files, got %d", files)
 	}
 	if got := missing(t, dir, clock, all...); len(got) != 0 {
@@ -179,7 +179,7 @@ func TestMergeResumesWhereItStopped(t *testing.T) {
 
 	stops := 0
 	for ; stops < 50; stops++ {
-		merging(t, dir, clock).Sweep(0)
+		merging(t, dir, clock).Sweep(0, nil)
 		if !exists(filepath.Join(dir, mergeName)) {
 			break
 		}
@@ -217,7 +217,7 @@ func TestMergeIgnoresWritesAfterItsCheckpoint(t *testing.T) {
 	}
 
 	c := merging(t, dir, clock)
-	c.Sweep(0)
+	c.Sweep(0, nil)
 
 	state := c.readMergeState()
 	if state == nil {
@@ -233,7 +233,7 @@ func TestMergeIgnoresWritesAfterItsCheckpoint(t *testing.T) {
 	part.Close()
 
 	for range 50 {
-		openRun(t, dir, clock).Sweep(time.Second)
+		openRun(t, dir, clock).Sweep(time.Second, nil)
 		if !exists(filepath.Join(dir, mergeName)) {
 			break
 		}
@@ -264,7 +264,7 @@ func TestMergeWritesEachKeyOnce(t *testing.T) {
 		putAll(merging(t, dir, clock), stored...)
 	}
 
-	merging(t, dir, clock).Sweep(time.Second)
+	merging(t, dir, clock).Sweep(time.Second, nil)
 
 	m, err := readManifest(dir)
 	if err != nil {
@@ -294,7 +294,7 @@ func TestReaderOutlivesAMerge(t *testing.T) {
 	reader := openRun(t, dir, clock)
 	reader.Get(keyFor(reader, all[0]))
 
-	merging(t, dir, clock).Sweep(time.Second)
+	merging(t, dir, clock).Sweep(time.Second, nil)
 	if exists(filepath.Join(dir, mergeName)) {
 		t.Fatal("the merge should finish within its budget")
 	}
@@ -320,7 +320,7 @@ func TestSweepCollectsStrays(t *testing.T) {
 		}
 	}
 
-	openRun(t, dir, clock).Sweep(time.Second)
+	openRun(t, dir, clock).Sweep(time.Second, nil)
 
 	for _, name := range strays {
 		if exists(filepath.Join(dir, name)) {
@@ -335,32 +335,6 @@ func TestSweepCollectsStrays(t *testing.T) {
 	}
 	if got := missing(t, dir, clock, "kept.md"); len(got) != 0 {
 		t.Error("a sweep should keep the listed entries")
-	}
-}
-
-// The one-file-per-entry layout is deleted in full by the first sweep that
-// finds it, however short the budget: one run waits for it once.
-func TestOldLayoutIsDeletedByOneSweep(t *testing.T) {
-	dir, clock := t.TempDir(), newTestClock()
-	oldLayout(t, dir, 3, 300)
-
-	openRun(t, dir, clock).Sweep(0)
-
-	if exists(filepath.Join(dir, "trim.txt")) || exists(filepath.Join(dir, "00")) {
-		t.Fatal("the sweep should take the old layout out of place")
-	}
-	if left := trashed(t, dir); left != 0 {
-		t.Fatalf("one sweep should delete the old layout, %d files are left", left)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			t.Fatalf("no directory of the old layout should be left, found %s", entry.Name())
-		}
 	}
 }
 

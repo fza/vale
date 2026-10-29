@@ -19,6 +19,12 @@ func acquire(path string) (*fileLock, error) {
 	return lockFile(path, windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
+// acquireShared waits until nobody holds the lock on path exclusively, and
+// holds it alongside any other shared holder.
+func acquireShared(path string) (*fileLock, error) {
+	return lockFile(path, 0)
+}
+
 // tryAcquire takes the lock on path if nobody holds it.
 func tryAcquire(path string) (*fileLock, bool) {
 	lock, err := lockFile(path, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY)

@@ -111,7 +111,7 @@ func (f *cacheFixture) stored(version, path string) bool {
 	}
 
 	l := f.linter(version)
-	defer l.CloseCache()
+	defer l.CloseCache(nil)
 
 	_, found := l.cache.Get(l.cacheKey(path, content))
 	return found

@@ -20,6 +20,12 @@ func acquire(path string) (*fileLock, error) {
 	return lockFile(path, unix.LOCK_EX)
 }
 
+// acquireShared waits until nobody holds the lock on path exclusively, and
+// holds it alongside any other shared holder.
+func acquireShared(path string) (*fileLock, error) {
+	return lockFile(path, unix.LOCK_SH)
+}
+
 // tryAcquire takes the lock on path if nobody holds it.
 func tryAcquire(path string) (*fileLock, bool) {
 	lock, err := lockFile(path, unix.LOCK_EX|unix.LOCK_NB)
