@@ -113,7 +113,7 @@ func decodeTail(content []byte) ([]tailRecord, int, error) {
 // encodeRecord appends one framed record to buf.
 func encodeRecord(buf []byte, epoch uint32, rec record) []byte {
 	start := len(buf)
-	buf = binary.LittleEndian.AppendUint32(buf, uint32(4+keyBytes+len(rec.data)))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(4+keyBytes+len(rec.data))) //nolint:gosec // one file's alerts, far below 4 GiB
 	buf = binary.LittleEndian.AppendUint32(buf, 0)
 	buf = binary.LittleEndian.AppendUint32(buf, epoch)
 	buf = append(buf, rec.key[:]...)
