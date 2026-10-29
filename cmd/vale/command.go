@@ -124,6 +124,15 @@ var commands = map[string]command{
 	"tag":            {Run: runTag, Summary: "Print a file's part-of-speech tags.", Hidden: true},
 	"dc":             {Run: printConfig, Summary: "Alias for `ls-config`.", Hidden: true},
 	"load":           {Run: loadConfigs, Summary: "Print a merged pair of configurations.", Hidden: true},
+
+	// Started by a run, detached from it, to delete the result cache's
+	// earlier layout.
+	"cache-clean-layout": {
+		Run:     cleanCacheLayout,
+		Summary: "Delete the one-file-per-entry layout of the result cache.",
+		Usage:   "cache-clean-layout v0 <dir>",
+		Hidden:  true,
+	},
 }
 
 func fix(args []string, flags *core.CLIFlags) error {

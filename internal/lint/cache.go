@@ -70,12 +70,15 @@ func (l *Linter) EnableCache(dir, version string) error {
 
 // CloseCache does the cache's upkeep, within its budget, and releases it. It is
 // meant for after a run has reported, so that no caller waits on it.
-func (l *Linter) CloseCache() {
+//
+// startClean starts a process deleting the cache's earlier layout, which takes
+// longer than a run may wait; see cache.Cache.Sweep.
+func (l *Linter) CloseCache(startClean func() error) {
 	if l.cache == nil {
 		return
 	}
 
-	l.cache.Sweep(cache.SweepBudget)
+	l.cache.Sweep(cache.SweepBudget, startClean)
 	l.cache.Close()
 }
 

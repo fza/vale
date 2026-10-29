@@ -19,6 +19,10 @@ func acquire(path string) (*fileLock, error) {
 	return &fileLock{file: f}, nil
 }
 
+func acquireShared(path string) (*fileLock, error) {
+	return acquire(path)
+}
+
 func tryAcquire(path string) (*fileLock, bool) {
 	lock, err := acquire(path)
 	return lock, err == nil

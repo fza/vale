@@ -124,25 +124,6 @@ func Open(dir string, salt []byte) (*Cache, error) {
 	}, nil
 }
 
-// Clean removes every entry.
-func Clean(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-
-	for _, entry := range entries {
-		if rmErr := os.RemoveAll(filepath.Join(dir, entry.Name())); rmErr != nil {
-			return rmErr
-		}
-	}
-
-	return nil
-}
-
 // Size reports how many bytes the entries occupy.
 func Size(dir string) (int64, error) {
 	var total int64
@@ -226,6 +207,12 @@ func (c *Cache) Flush() {
 		return
 	}
 
+	use, err := useLayout(c.dir, layoutPacked)
+	if err != nil {
+		return
+	}
+	defer use.release()
+
 	lock, err := acquire(filepath.Join(c.dir, lockName))
 	if err != nil {
 		return
@@ -268,6 +255,13 @@ func (c *Cache) disable() {
 // empties the tail, so whichever side of a seal the two reads fall on, every
 // record is in one of them.
 func (c *Cache) load() {
+	use, err := useLayout(c.dir, layoutPacked)
+	if err != nil {
+		c.disable()
+		return
+	}
+	defer use.release()
+
 	tail, err := readTail(filepath.Join(c.dir, tailName))
 	if errors.Is(err, errUnknownFormat) {
 		c.disable()
