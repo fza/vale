@@ -68,6 +68,23 @@ func (l *Linter) EnableCache(dir, version string) error {
 	return nil
 }
 
+// CloseCache does the cache's upkeep, within its budget, and releases it. It is
+// meant for after a run has reported, so that no caller waits on it.
+func (l *Linter) CloseCache() {
+	if l.cache == nil {
+		return
+	}
+
+	l.cache.Sweep(cache.SweepBudget)
+	l.cache.Close()
+}
+
+func (l *Linter) flushCache() {
+	if l.cache != nil {
+		l.cache.Flush()
+	}
+}
+
 // cacheSalt hashes everything shared by every file of a run.
 //
 // Two things go into it. The configuration is hashed as Vale resolved it,
