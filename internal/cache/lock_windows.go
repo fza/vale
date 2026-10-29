@@ -37,7 +37,9 @@ func lockFile(path string, flags uint32) (*fileLock, error) {
 		return nil, err
 	}
 
-	err = windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, &windows.Overlapped{})
+	// A lock on Windows keeps other handles from reading the bytes it covers,
+	// so it covers one byte far past the note a cleaner writes into the file.
+	err = windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, &windows.Overlapped{OffsetHigh: 1})
 	if err != nil {
 		f.Close()
 		return nil, err
