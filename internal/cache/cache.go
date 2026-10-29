@@ -207,7 +207,7 @@ func (c *Cache) Flush() {
 		return
 	}
 
-	use, err := useLayout(c.dir, layoutPacked)
+	use, err := usePacked(c.dir)
 	if err != nil {
 		return
 	}
@@ -255,7 +255,7 @@ func (c *Cache) disable() {
 // empties the tail, so whichever side of a seal the two reads fall on, every
 // record is in one of them.
 func (c *Cache) load() {
-	use, err := useLayout(c.dir, layoutPacked)
+	use, err := usePacked(c.dir)
 	if err != nil {
 		c.disable()
 		return
@@ -283,7 +283,7 @@ func (c *Cache) epoch() uint32 {
 }
 
 func epochAt(t time.Time) uint32 {
-	return uint32(t.Unix() / int64(epochLength/time.Second))
+	return uint32(t.Unix() / int64(epochLength/time.Second)) //nolint:gosec // three-day slots since 1970 stay far below 2^32 for any clock
 }
 
 // record is one entry on its way to the tail.

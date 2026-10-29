@@ -47,7 +47,7 @@ func (c *Cache) Sweep(budget time.Duration, startClean func() error) {
 		return
 	}
 
-	use, err := useLayout(c.dir, layoutPacked)
+	use, err := usePacked(c.dir)
 	if err != nil {
 		return
 	}
@@ -440,7 +440,8 @@ func (c *Cache) commitMerge(state *mergeState, w *segmentWriter) error {
 				kept = append(kept, seg)
 			}
 		}
-		m.Segments = append(kept, info)
+		kept = append(kept, info)
+		m.Segments = kept
 		err = writeManifest(c.dir, m)
 	}
 	lock.release()

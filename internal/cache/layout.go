@@ -69,9 +69,10 @@ func holdClean(dir string, layout int, wait bool) (*fileLock, error) {
 
 var errCleanUnderWay = errors.New("another process is cleaning this layout")
 
-// useLayout holds layout's clean lock shared, waiting out a clean under way.
-func useLayout(dir string, layout int) (*fileLock, error) {
-	return acquireShared(filepath.Join(dir, cleanLockName(layout)))
+// usePacked holds the packed layout's clean lock shared, waiting out a clean
+// under way. The one-file-per-entry layout has no reader left to hold it.
+func usePacked(dir string) (*fileLock, error) {
+	return acquireShared(filepath.Join(dir, cleanLockName(layoutPacked)))
 }
 
 // Clean removes every entry of every layout.
