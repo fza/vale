@@ -338,26 +338,29 @@ func TestSweepCollectsStrays(t *testing.T) {
 	}
 }
 
-// The one-file-per-entry layout is moved aside and deleted a chunk at a
-// time, so that even a large one costs each run no more than its budget.
-func TestOldLayoutIsDeletedInChunks(t *testing.T) {
+// The one-file-per-entry layout is deleted in full by the first sweep that
+// finds it, however short the budget: one run waits for it once.
+func TestOldLayoutIsDeletedByOneSweep(t *testing.T) {
 	dir, clock := t.TempDir(), newTestClock()
 	oldLayout(t, dir, 3, 300)
 
 	openRun(t, dir, clock).Sweep(0)
+
 	if exists(filepath.Join(dir, "trim.txt")) || exists(filepath.Join(dir, "00")) {
-		t.Fatal("the first sweep should move the old layout aside")
+		t.Fatal("the sweep should take the old layout out of place")
 	}
-	if trashed(t, dir) == 0 {
-		t.Fatal("a sweep without budget should stop after a chunk")
-	}
-
-	for range 20 {
-		openRun(t, dir, clock).Sweep(0)
-	}
-
 	if left := trashed(t, dir); left != 0 {
-		t.Fatalf("repeated sweeps should delete the old layout, %d files are left", left)
+		t.Fatalf("one sweep should delete the old layout, %d files are left", left)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Fatalf("no directory of the old layout should be left, found %s", entry.Name())
+		}
 	}
 }
 
