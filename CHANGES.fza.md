@@ -409,12 +409,32 @@ in the current one, and segments older than the previous epoch are deleted
 whole. An entry nobody reads is gone after three to six days.
 
 Upkeep is the sweep, run after a run has reported: it deletes expired segments,
-merges an epoch's smallest segments once it holds more than eight, removes
-files no manifest accounts for, and empties the one-file-per-entry layout of
-earlier builds. One process sweeps at a time, under a non-blocking lock the
-operating system releases when its holder dies, so no claim goes stale. A
-sweep stops after 200 ms; a merge saves the last key it wrote, and the next
-sweep resumes from there. Opening the cache never sweeps.
+merges an epoch's smallest segments once it holds more than eight, and removes
+files no manifest accounts for. One process sweeps at a time, under a
+non-blocking lock the operating system releases when its holder dies, so no
+claim goes stale. A sweep stops after 200 ms; a merge saves the last key it
+wrote, and the next sweep resumes from there. Opening the cache never sweeps.
+
+Each layout the cache directory has held has a clean lock of its own:
+`clean-v0.lock` for one file per entry, `clean-v1.lock` for the packed store.
+Whoever deletes a layout holds its lock exclusively and writes into it the
+layout, its own pid and the time it started; whoever reads or writes a layout
+holds its lock shared. A run therefore waits for a clean of the layout it uses,
+never for a clean of another, and no layout is deleted by two processes at
+once. `vale cache-clean` takes both locks, waiting for the runs under way, and
+removes everything but the lock files, which other processes may be waiting
+on.
+
+The one-file-per-entry layout of earlier builds takes minutes to delete once it
+has grown to millions of files: 360,000 took 35 s on the machine below. A sweep
+that finds any of it, with its clean lock free, renames its 256 shard
+directories aside, one rename each, and starts `vale cache-clean-layout v0`, a
+hidden command, as a process of its own: in a session of its own on Unix,
+detached from the console on Windows, inheriting no standard stream, so
+nothing waiting on the run's output waits on it. That process takes the lock
+itself and deletes what was moved aside. Nothing marks the layout as done: a
+clean that is killed frees the lock and leaves files behind, and the next
+sweep that finds any starts another.
 
 The salt covers the running binary's own size and modification time — a
 development build reports no version, so the version alone cannot tell two of
@@ -464,26 +484,38 @@ Rejected:
 - One segment file per run: no writer ever waits, but every run leaves a file
   until the next merge.
 - A merge in one go: a large one takes seconds, longer than a run may wait.
-- Upkeep in a detached child process: cross-platform spawning, closing the
-  inherited pipes a hook harness waits on, and orphans to handle.
+- Routine upkeep in a detached process: spawning one per sweep for work that
+  fits in 200 ms buys nothing for its platform code. A process of its own is
+  kept for the one deletion that does not fit.
+- Deleting the earlier layout in the run that finds it: 1.48M files take about
+  two and a half minutes, which that run would wait for, and a hook with a
+  timeout may kill it.
+- Deleting the earlier layout 200 ms a run: about 2,000 files a run, some 740
+  runs for 1.48M files.
+- One clean lock for every layout: every run would wait out the minutes the
+  earlier layout takes to delete.
+- `vale cache-clean` detaching too: it would return before the space is free,
+  with nothing to report.
 - A directory per configuration: only cheaper deletion, which epochs already
   give.
 
 Accepted costs: an on-disk format of the fork's own, held by its tests; up to
-200 ms of upkeep after a run has reported, before it exits; and a cache left by
-an earlier build is deleted 200 ms at a time, about 8,000 files a run on the
-machine above, unless `vale cache-clean` removes it at once. An earlier build
-sharing the directory recreates its empty shard directories, which the next
-sweep moves aside again.
+200 ms of upkeep after a run has reported, before it exits; a process that
+outlives the run which started it, once per machine, to delete the earlier
+layout; and a hidden command for it. An earlier build sharing the directory
+recreates its shard directories, which the next sweep moves aside and hands to
+another clean.
 
 - `internal/cache/cache.go`: the store (`Open`, `Key`, `Get`, `Put`, `Flush`, `Close`, `Clean`, `Size`, `Dir`).
 - `internal/cache/tail.go`, `internal/cache/segment.go`, `internal/cache/manifest.go`: the on-disk format.
 - `internal/cache/sweep.go`: `Sweep` (expiry, the resumable merge, strays, the old layout).
-- `internal/cache/lock_unix.go`, `internal/cache/lock_windows.go`, `internal/cache/lock_other.go`: the file lock.
+- `internal/cache/layout.go`: the clean locks (`holdClean`, `useLayout`), `Clean`, `CleanOldLayout`, `moveOldLayoutAside`.
+- `internal/cache/lock_unix.go`, `internal/cache/lock_windows.go`, `internal/cache/lock_other.go`: the file lock, exclusive or shared.
 - `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
 - `internal/lint/lint.go`: `Linter.cache`, the lookup and store around `lintFile`, and the flush when `Lint` returns.
-- `cmd/vale/main.go` (`CloseCache` once the alerts are printed), `cmd/vale/cache.go`, `cmd/vale/command.go`, `cmd/vale/flag.go`, `internal/core/config.go`.
-- `internal/cache/cache_internal_test.go`, `internal/cache/sweep_internal_test.go`, `internal/lint/cache_test.go` (`TestEveryFlagIsClassified` holds every CLI flag to a decision about the salt).
+- `cmd/vale/main.go` (`CloseCache` once the alerts are printed), `cmd/vale/cache.go` (`cleanCacheLayout`, `startOldLayoutClean`), `cmd/vale/command.go` (the hidden `cache-clean-layout`), `cmd/vale/flag.go`, `internal/core/config.go`.
+- `cmd/vale/detach_unix.go`, `cmd/vale/detach_windows.go`, `cmd/vale/detach_other.go`: how the clean is detached from the run.
+- `internal/cache/cache_internal_test.go`, `internal/cache/sweep_internal_test.go`, `internal/cache/layout_internal_test.go`, `cmd/vale/cache_internal_test.go`, `internal/lint/cache_test.go` (`TestEveryFlagIsClassified` holds every CLI flag to a decision about the salt).
 - `internal/e2e/e2e_test.go`: every scenario runs with `--no-cache`, so a case reports what it was given rather than what an earlier build reported for the same fixture.
 
 ### Every input path goes through one worker pool
