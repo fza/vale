@@ -393,12 +393,28 @@ features and loses these has lost the point.
 
 ### The alerts of an unchanged file are reused
 
-A result cache modelled on the Go build cache: entries are addressed by a hash
-of everything that could change the answer, each lives in its own file, and
-nothing indexes them. A missing, truncated or unreadable entry is a miss, so an
-interrupted write costs a re-lint and never a wrong result. Eviction is by last
-use — a read touches an entry's modification time at most hourly, and a sweep
-that runs at most daily deletes what has gone unused for five days.
+A result cache. Entries are addressed by a hash of everything that could change
+the answer, and they live in a handful of files however many there are: an
+append log, the tail, that each run adds to once, when its lint ends; sorted
+read-only segments the tail is sealed into once it passes 1 MiB; and a manifest
+listing the segments. Many Vale processes share one cache: a writer holds a
+file lock for the milliseconds an append, a seal or a manifest swap takes, and
+a reader takes none. Every record carries a CRC-32C, so a record cut short or
+damaged is a miss, never a wrong answer, and an interrupted write costs a
+re-lint.
+
+Eviction is by last use, counted in three-day epochs. A record belongs to the
+epoch it was written in; a hit on one from the previous epoch writes it again
+in the current one, and segments older than the previous epoch are deleted
+whole. An entry nobody reads is gone after three to six days.
+
+Upkeep is the sweep, run after a run has reported: it deletes expired segments,
+merges an epoch's smallest segments once it holds more than eight, removes
+files no manifest accounts for, and empties the one-file-per-entry layout of
+earlier builds. One process sweeps at a time, under a non-blocking lock the
+operating system releases when its holder dies, so no claim goes stale. A
+sweep stops after 200 ms; a merge saves the last key it wrote, and the next
+sweep resumes from there. Opening the cache never sweeps.
 
 The salt covers the running binary's own size and modification time — a
 development build reports no version, so the version alone cannot tell two of
@@ -421,12 +437,54 @@ alerts for as long as the entry lives. A file the cache cannot read is linted
 the way an uncached run lints it and stores nothing. A cache that cannot be
 opened is reported and then done without.
 
-- `internal/cache/cache.go` — the store: `Open`, `Key`, `Get`, `Put`, `Clean`, `Size`, `Dir`, `trim`, `markUsed`.
-- `internal/lint/cache.go` — the policy: `EnableCache`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`.
-- `internal/lint/lint.go` — `Linter.cache`, and the lookup and store around `lintFile`.
-- `cmd/vale/cache.go`, `cmd/vale/command.go`, `cmd/vale/flag.go`, `cmd/vale/main.go`, `internal/core/config.go`.
-- `internal/cache/cache_test.go`, `internal/lint/cache_test.go` (`TestEveryFlagIsClassified` holds every CLI flag to a decision about the salt).
-- `internal/e2e/e2e_test.go` — every scenario runs with `--no-cache`, so a case reports what it was given rather than what an earlier build reported for the same fixture.
+Measured on an Apple-silicon Mac, each run linting 40 Markdown files, wall time
+per run:
+
+| Cache | 1 run | 2 at once | 8 at once |
+|---|---|---|---|
+| One file per entry, 384k entries, daily sweep due | 5.9 s | 6.7 s | 11.1 s |
+| One file per entry, 384k entries, sweep not due | | 0.3-0.4 s | 0.8-1.3 s |
+| Packed, 1.5M entries in 67 MB and 11 files | 0.8 s | 0.4-0.5 s | 0.6-1.6 s |
+| `--no-cache` | | 0.3-0.4 s | 0.6-1.6 s |
+
+The one-file-per-entry cache it replaces had grown to 1.48M entries and 5.7 GB
+on the same machine, 97.6% of them a two-byte empty result, and its sweep took
+161 s, started again by every process that opened the cache meanwhile.
+
+Rejected:
+
+- One file per entry, the Go build cache's layout: a file-system block and an
+  inode for a two-byte result, and a sweep that has to stat every entry.
+- A claimed sweep over that layout: one sweeper instead of many, but still
+  millions of files and a walk over all of them.
+- An embedded database. bbolt, Badger and Pebble hold their store for one
+  process at a time. SQLite in pure Go (`modernc.org/sqlite`,
+  `ncruces/go-sqlite3`) allows several, for a large dependency and a larger
+  binary.
+- One segment file per run: no writer ever waits, but every run leaves a file
+  until the next merge.
+- A merge in one go: a large one takes seconds, longer than a run may wait.
+- Upkeep in a detached child process: cross-platform spawning, closing the
+  inherited pipes a hook harness waits on, and orphans to handle.
+- A directory per configuration: only cheaper deletion, which epochs already
+  give.
+
+Accepted costs: an on-disk format of the fork's own, held by its tests; up to
+200 ms of upkeep after a run has reported, before it exits; and a cache left by
+an earlier build is deleted 200 ms at a time, about 8,000 files a run on the
+machine above, unless `vale cache-clean` removes it at once. An earlier build
+sharing the directory recreates its empty shard directories, which the next
+sweep moves aside again.
+
+- `internal/cache/cache.go`: the store (`Open`, `Key`, `Get`, `Put`, `Flush`, `Close`, `Clean`, `Size`, `Dir`).
+- `internal/cache/tail.go`, `internal/cache/segment.go`, `internal/cache/manifest.go`: the on-disk format.
+- `internal/cache/sweep.go`: `Sweep` (expiry, the resumable merge, strays, the old layout).
+- `internal/cache/lock_unix.go`, `internal/cache/lock_windows.go`, `internal/cache/lock_other.go`: the file lock.
+- `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
+- `internal/lint/lint.go`: `Linter.cache`, the lookup and store around `lintFile`, and the flush when `Lint` returns.
+- `cmd/vale/main.go` (`CloseCache` once the alerts are printed), `cmd/vale/cache.go`, `cmd/vale/command.go`, `cmd/vale/flag.go`, `internal/core/config.go`.
+- `internal/cache/cache_internal_test.go`, `internal/cache/sweep_internal_test.go`, `internal/lint/cache_test.go` (`TestEveryFlagIsClassified` holds every CLI flag to a decision about the salt).
+- `internal/e2e/e2e_test.go`: every scenario runs with `--no-cache`, so a case reports what it was given rather than what an earlier build reported for the same fixture.
 
 ### Every input path goes through one worker pool
 
