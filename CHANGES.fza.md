@@ -446,6 +446,18 @@ entries unreachable rather than wrong. The key adds the file's path — the
 configuration assigns rules by path, so the same bytes under two names are two
 different questions — and its content.
 
+Paths are addressed relative to the project root: the configuration's own
+paths in the salt, and the file's path in the key. Two checkouts of one tree,
+such as git worktrees, therefore share their entries, and a new worktree starts
+with what the others have linted. A path outside the root stays absolute,
+which costs sharing and never correctness. A configuration that depends on
+where the project sits keeps absolute addresses throughout: one found without a
+project configuration, and one with a section whose glob names an absolute
+path outside the project.
+
+Rejected: absolute addresses everywhere. They are correct, but every worktree
+lints each file once more and keeps its own copy of every entry.
+
 Only formats whose alerts follow from the file's own bytes are cached: all code,
 and Markdown and HTML. The rest are excluded because their converter reads the
 filesystem itself — DITA resolves maps and content references, XML applies an
@@ -511,7 +523,7 @@ another clean.
 - `internal/cache/sweep.go`: `Sweep` (expiry, the resumable merge, strays, the old layout).
 - `internal/cache/layout.go`: the clean locks (`holdClean`, `useLayout`), `Clean`, `CleanOldLayout`, `moveOldLayoutAside`.
 - `internal/cache/lock_unix.go`, `internal/cache/lock_windows.go`, `internal/cache/lock_other.go`: the file lock, exclusive or shared.
-- `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
+- `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `cacheRoot`, `rootRelative`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
 - `internal/lint/lint.go`: `Linter.cache`, the lookup and store around `lintFile`, and the flush when `Lint` returns.
 - `cmd/vale/main.go` (`CloseCache` once the alerts are printed), `cmd/vale/cache.go` (`cleanCacheLayout`, `startOldLayoutClean`), `cmd/vale/command.go` (the hidden `cache-clean-layout`), `cmd/vale/flag.go`, `internal/core/config.go`.
 - `cmd/vale/detach_unix.go`, `cmd/vale/detach_windows.go`, `cmd/vale/detach_other.go`: how the clean is detached from the run.
