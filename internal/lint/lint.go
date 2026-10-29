@@ -71,6 +71,9 @@ type Linter struct {
 	// caching is switched off.
 	cache *cache.Cache
 
+	// cacheRoot is the directory cache keys are relative to; see cacheRoot.
+	cacheRoot string
+
 	// inScope lists the rules whose scope matches a given block scope, keyed by
 	// the block's scope and parent.
 	//
