@@ -19,10 +19,9 @@ const (
 	// short the budget.
 	sweepChunk = 256
 
-	trashPrefix = "trash-"
-	partExt     = ".part"
-	partIndex   = ".idx"
-	tempExt     = ".tmp"
+	partExt   = ".part"
+	partIndex = ".idx"
+	tempExt   = ".tmp"
 )
 
 // Sweep does the cache's upkeep: it deletes the segments of epochs gone by,
@@ -30,17 +29,31 @@ const (
 // and merges an epoch's smallest segments once it holds too many. The merge
 // stops after about budget and is resumed by the next Sweep.
 //
-// The one-file-per-entry layout of earlier builds is deleted in full by the
-// first sweep that finds it, whatever the budget: one run waits for it once,
-// rather than every run spending its budget on it until it is gone.
+// The one-file-per-entry layout of earlier builds takes minutes to delete
+// when it has grown to millions of files, longer than a run may wait. The
+// sweep moves it aside and calls startClean, which is to start a process
+// running CleanOldLayout that outlives the run. That process holds the
+// layout's clean lock; while it does, sweeps leave the layout to it, and once
+// it has ended, whether done or cut short, the next sweep that finds anything
+// of the layout left starts another.
 //
 // One process sweeps at a time. A run that finds another one sweeping, or
 // nothing to do, returns at once.
-func (c *Cache) Sweep(budget time.Duration) {
+func (c *Cache) Sweep(budget time.Duration, startClean func() error) {
 	c.mu.Lock()
 	disabled := c.disabled
 	c.mu.Unlock()
-	if disabled || !c.sweepDue() {
+	if disabled {
+		return
+	}
+
+	use, err := useLayout(c.dir, layoutPacked)
+	if err != nil {
+		return
+	}
+	defer use.release()
+
+	if !c.sweepDue() {
 		return
 	}
 
@@ -52,8 +65,28 @@ func (c *Cache) Sweep(budget time.Duration) {
 
 	c.dropExpired()
 	c.collectStrays()
-	c.emptyTrash()
+	c.handOverOldLayout(startClean)
 	c.merge(time.Now().Add(budget))
+}
+
+// handOverOldLayout moves what is left of the one-file-per-entry layout aside
+// and starts a clean of it, unless a clean is under way already.
+func (c *Cache) handOverOldLayout(startClean func() error) {
+	entries, err := os.ReadDir(c.dir)
+	if err != nil || !slices.ContainsFunc(entries, isOldLayout) {
+		return
+	}
+
+	lock, err := holdClean(c.dir, layoutFiles, false)
+	if err != nil {
+		return
+	}
+	moveOldLayoutAside(c.dir)
+	lock.release()
+
+	if startClean != nil {
+		startClean()
+	}
 }
 
 // sweepDue reports whether a sweep would find anything to do. It costs a read
@@ -92,19 +125,15 @@ func (c *Cache) sweepDue() bool {
 	return false
 }
 
-// isLeftover reports whether entry is something a sweep removes: a file only
-// this cache writes that nothing accounts for, a shard directory of the
-// one-file-per-entry layout, or a directory already moved aside for deletion.
+// isLeftover reports whether entry is something a sweep sees to: a file only
+// this cache writes that nothing accounts for, or anything of the
+// one-file-per-entry layout.
 func isLeftover(entry os.DirEntry, known map[string]bool) bool {
-	name := entry.Name()
-	if known[name] {
+	if known[entry.Name()] {
 		return false
 	}
-	if entry.IsDir() {
-		return isShardName(name) || strings.HasPrefix(name, trashPrefix)
-	}
 
-	return isStrayName(name)
+	return isOldLayout(entry) || (!entry.IsDir() && isStrayName(entry.Name()))
 }
 
 // knownNames are the names in the cache directory a sweep leaves alone.
@@ -114,6 +143,9 @@ func knownNames(m manifest, state *mergeState) map[string]bool {
 		tailName:     true,
 		lockName:     true,
 		sweepName:    true,
+
+		cleanLockName(layoutFiles):  true,
+		cleanLockName(layoutPacked): true,
 	}
 	for _, info := range m.Segments {
 		known[info.Name] = true
@@ -484,9 +516,8 @@ func (c *Cache) discardMerge(state *mergeState) {
 }
 
 // collectStrays removes what the manifest and a merge in progress do not
-// account for: segments a seal or a merge wrote and never listed, temporary
-// files, and the shard directories of the one-file-per-entry layout, which
-// are moved aside to be emptied by emptyTrash.
+// account for: segments a seal or a merge wrote and never listed, and
+// temporary files.
 //
 // It runs under the writer lock, since a seal writes its segment before it
 // lists it.
@@ -513,11 +544,7 @@ func (c *Cache) collectStrays() {
 		name := entry.Name()
 		present[name] = true
 
-		switch {
-		case !isLeftover(entry, known), strings.HasPrefix(name, trashPrefix):
-		case entry.IsDir():
-			os.Rename(filepath.Join(c.dir, name), filepath.Join(c.dir, trashPrefix+name+"-"+randomHex()))
-		default:
+		if isLeftover(entry, known) && !isOldLayout(entry) {
 			os.Remove(filepath.Join(c.dir, name))
 		}
 	}
@@ -534,16 +561,6 @@ func (c *Cache) collectStrays() {
 	}
 }
 
-// isShardName reports whether name is one of the 256 directories the
-// one-file-per-entry layout spread its entries over.
-func isShardName(name string) bool {
-	if len(name) != 2 {
-		return false
-	}
-	_, err := hex.DecodeString(name)
-	return err == nil && strings.ToLower(name) == name
-}
-
 // isStrayName reports whether name is a file only this cache writes, which a
 // sweep may therefore remove once nothing lists it.
 func isStrayName(name string) bool {
@@ -553,20 +570,5 @@ func isStrayName(name string) bool {
 		}
 	}
 
-	return name == mergeName || name == "trim.txt"
-}
-
-// emptyTrash deletes the directories moved aside for deletion, with
-// everything in them.
-func (c *Cache) emptyTrash() {
-	entries, err := os.ReadDir(c.dir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), trashPrefix) {
-			os.RemoveAll(filepath.Join(c.dir, entry.Name()))
-		}
-	}
+	return name == mergeName
 }

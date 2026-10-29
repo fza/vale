@@ -355,7 +355,7 @@ func TestUnknownFormatIsLeftAlone(t *testing.T) {
 		t.Error("a cache of another format should not be read")
 	}
 	putAll(c, "b.md")
-	c.Sweep(time.Second)
+	c.Sweep(time.Second, nil)
 
 	after, err := os.ReadFile(filepath.Join(dir, tailName))
 	if err != nil {
