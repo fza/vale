@@ -59,7 +59,7 @@ func startOldLayoutClean() error {
 		return err
 	}
 
-	cmd := exec.Command(exe, "cache-clean-layout", "v0", dir) //nolint:gosec,noctx // our own binary, detached on purpose
+	cmd := exec.Command(exe, "cache-clean-layout", "v0", dir) //nolint:noctx // detached on purpose: no context of this run may end it
 	cmd.SysProcAttr = detachedProcess()
 	if err = cmd.Start(); err != nil {
 		return err

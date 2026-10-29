@@ -11,6 +11,7 @@ import (
 	"hash/crc32"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -69,14 +70,14 @@ func newSegmentWriter(file *os.File, epoch uint32) *segmentWriter {
 func (w *segmentWriter) add(key Key, data []byte) error {
 	if len(w.index) == 0 || w.sinceIndex >= indexStride || w.offset-w.lastIndexed >= indexBytes {
 		w.index = append(w.index, key[:]...)
-		w.index = binary.LittleEndian.AppendUint64(w.index, uint64(w.offset))
+		w.index = binary.LittleEndian.AppendUint64(w.index, uint64(w.offset)) //nolint:gosec // an offset is never negative
 		w.sinceIndex = 0
 		w.lastIndexed = w.offset
 	}
 
 	head := make([]byte, recordHead)
 	copy(head, key[:])
-	binary.LittleEndian.PutUint32(head[keyBytes:], uint32(len(data)))
+	binary.LittleEndian.PutUint32(head[keyBytes:], uint32(len(data))) //nolint:gosec // one file's alerts, far below 4 GiB
 	binary.LittleEndian.PutUint32(head[keyBytes+4:], recordSum(head[:keyBytes+4], data))
 
 	if _, err := w.out.Write(head); err != nil {
@@ -100,9 +101,10 @@ func (w *segmentWriter) finish() error {
 	}
 
 	footer := make([]byte, 0, footerBytes)
-	footer = binary.LittleEndian.AppendUint64(footer, uint64(w.offset))
-	footer = binary.LittleEndian.AppendUint32(footer, uint32(len(w.index)/indexEntry))
-	footer = binary.LittleEndian.AppendUint32(footer, uint32(w.records))
+	// A segment holds one epoch's entries, millions at most, far below 2^32.
+	footer = binary.LittleEndian.AppendUint64(footer, uint64(w.offset))                //nolint:gosec // never negative
+	footer = binary.LittleEndian.AppendUint32(footer, uint32(len(w.index)/indexEntry)) //nolint:gosec // see above
+	footer = binary.LittleEndian.AppendUint32(footer, uint32(w.records))               //nolint:gosec // see above
 	footer = binary.LittleEndian.AppendUint32(footer, w.epoch)
 	footer = binary.LittleEndian.AppendUint32(footer, crc32.Checksum(w.index, castagnoli))
 	footer = binary.LittleEndian.AppendUint32(footer, crc32.Checksum(footer, castagnoli))
@@ -270,7 +272,11 @@ func readSegment(f *os.File) (*segment, error) {
 		return nil, errDamagedSegment
 	}
 
-	dataEnd := int64(binary.LittleEndian.Uint64(footer))
+	rawEnd := binary.LittleEndian.Uint64(footer)
+	if rawEnd > math.MaxInt64 || int64(rawEnd) > info.Size() {
+		return nil, errDamagedSegment
+	}
+	dataEnd := int64(rawEnd)
 	entries := int64(binary.LittleEndian.Uint32(footer[8:]))
 	if dataEnd+entries*indexEntry+footerBytes != info.Size() {
 		return nil, errDamagedSegment
@@ -288,7 +294,11 @@ func readSegment(f *os.File) (*segment, error) {
 	for i := range index {
 		entry := raw[i*indexEntry:]
 		copy(index[i].key[:], entry[:keyBytes])
-		index[i].offset = int64(binary.LittleEndian.Uint64(entry[keyBytes:]))
+		offset := binary.LittleEndian.Uint64(entry[keyBytes:])
+		if offset > math.MaxInt64 || int64(offset) > dataEnd {
+			return nil, errDamagedSegment
+		}
+		index[i].offset = int64(offset)
 	}
 
 	return &segment{

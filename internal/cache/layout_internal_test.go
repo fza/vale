@@ -193,7 +193,7 @@ func TestCleanWaitsForRunsAndKeepsItsLocks(t *testing.T) {
 	putAll(sealed(t, dir, clock), "a.md")
 	oldLayout(t, dir, 2, 10)
 
-	using, err := useLayout(dir, layoutPacked)
+	using, err := usePacked(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestRunsDoNotWaitForEachOther(t *testing.T) {
 	dir, clock := t.TempDir(), newTestClock()
 	putAll(openRun(t, dir, clock), "a.md")
 
-	using, err := useLayout(dir, layoutPacked)
+	using, err := usePacked(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
