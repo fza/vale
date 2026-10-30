@@ -93,6 +93,15 @@ func rootRelative(body []byte, root string) []byte {
 	}
 
 	body = bytes.ReplaceAll(body, append(append([]byte{}, escaped...), separator[1:len(separator)-1]...), []byte("<root>/"))
+
+	// A section's pattern names the root with forward slashes whatever the
+	// platform's separator.
+	slashed, err := json.Marshal(filepath.ToSlash(root) + "/")
+	if err != nil {
+		return body
+	}
+	body = bytes.ReplaceAll(body, slashed[1:len(slashed)-1], []byte("<root>/"))
+
 	return bytes.ReplaceAll(body, append(append([]byte{'"'}, escaped...), '"'), []byte(`"<root>"`))
 }
 
