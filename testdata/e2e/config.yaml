@@ -668,42 +668,40 @@ cases:
         MinAlertLevel = suggestion
 
         [*.go]
-        BasedOnStyles = House, House.Literals
+        BasedOnStyles = House, House.Comments
 
         [*_test.go]
-        House.Literals = NO
+        House.Comments = NO
       styles/House/Obvious.yml: |
         extends: existence
         message: "'%s' is not prose."
         level: error
         tokens:
           - obviously
-      styles/House.Literals/Banned.yml: |
+      styles/House.Comments/Banned.yml: |
         extends: existence
         message: "'%s' is banned."
         level: error
-        scope: literal
+        scope: comment
         tokens:
           - banana
       a.go: |
         package main
 
         // This is obviously a comment.
-        func main() {
-                println("a banana here")
-        }
+        // A banana here.
+        func main() {}
       a_test.go: |
         package main
 
         // This is obviously a comment.
-        func main() {
-                println("a banana here")
-        }
+        // A banana here.
+        func main() {}
     args: a.go a_test.go
     exit: 1
     want: |
       a.go:3:12:House.Obvious:'obviously' is not prose.
-      a.go:5:20:House.Literals.Banned:'banana' is banned.
+      a.go:4:6:House.Comments.Banned:'banana' is banned.
       a_test.go:3:12:House.Obvious:'obviously' is not prose.
 
   - name: nested-carves-out-a-subtree
