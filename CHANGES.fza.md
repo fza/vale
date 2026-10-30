@@ -446,17 +446,48 @@ entries unreachable rather than wrong. The key adds the file's path — the
 configuration assigns rules by path, so the same bytes under two names are two
 different questions — and its content.
 
-Paths are addressed relative to the project root: the configuration's own
-paths in the salt, and the file's path in the key. Two checkouts of one tree,
-such as git worktrees, therefore share their entries, and a new worktree starts
-with what the others have linted. A path outside the root stays absolute,
-which costs sharing and never correctness. A configuration that depends on
-where the project sits keeps absolute addresses throughout: one found without a
-project configuration, and one with a section whose glob names an absolute
-path outside the project.
+Two checkouts of one tree, such as git worktrees, share their entries, and a
+new worktree starts with what the others have linted. A file's checkout is the
+nearest directory above it holding a `.git`: a directory with a `HEAD` in it,
+or the `.git` file a linked worktree or a submodule carries, which starts with
+`gitdir:`. It is found by reading the filesystem, never by running git, and
+each directory is asked once per run. Where `.vale.ini` was found plays no
+part: a nested directory or a home directory can hold the configuration as
+well. Within a checkout, the resolved configuration and the files it was read
+from name every path under the checkout relative to it. A path outside it stays
+absolute, so a configuration in a home directory reads the same in every
+checkout.
+
+A section's pattern, a `[formats]` glob key and a nested configuration's anchor
+are matched against the file's path as the run spelled it: relative to the
+working directory, or absolute. `[docs/*.md]` applies to `docs/doc.md` and not
+to the same file spelled absolute, so the key carries the spelling, unless no
+pattern can tell two checkouts apart:
+
+- Every pattern looks at the end of a file's name alone (`*`, `*.md`,
+  `*.{md,mdx}`, `**/*.md`, or a negation of one): the key carries the path
+  relative to the checkout, from any working directory and for any spelling.
+- The path is spelled absolute and every pattern is anchored (it looks at the
+  name alone, starts with the checkout's own path, or is a relative pattern,
+  which never matches an absolute path): the key carries the path relative to
+  the checkout.
+
+A section's condition reads the path relative to the configuration's root, so
+when a section carries one, that path is part of the key as well. A file in no
+checkout is keyed by its spelling, as before.
 
 Rejected: absolute addresses everywhere. They are correct, but every worktree
-lints each file once more and keeps its own copy of every entry.
+lints each file once more and keeps its own copy of every entry. Rejected: the
+directory `.vale.ini` was found in as the project root. Any directory can hold
+one, so the root moved with the working directory, worktrees nested in a main
+checkout were keyed by their place inside it, and a home-only configuration
+shared nothing. Rejected: a root-relative key whatever the patterns. It gave
+`docs/doc.md` and its absolute spelling one entry where `[docs/*.md]` lints
+them differently. Rejected: a marker file per checkout, or asking git for the
+repository. The first needs setting up in every worktree and is copied along
+with the tree; the second costs a process per run. Accepted cost: with a
+pattern that names a directory, runs from different working directories keep
+separate entries.
 
 Only formats whose alerts follow from the file's own bytes are cached: all code,
 and Markdown and HTML. The rest are excluded because their converter reads the
@@ -523,7 +554,8 @@ another clean.
 - `internal/cache/sweep.go`: `Sweep` (expiry, the resumable merge, strays, the old layout).
 - `internal/cache/layout.go`: the clean locks (`holdClean`, `useLayout`), `Clean`, `CleanOldLayout`, `moveOldLayoutAside`.
 - `internal/cache/lock_unix.go`, `internal/cache/lock_windows.go`, `internal/cache/lock_other.go`: the file lock, exclusive or shared.
-- `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `cacheRoot`, `rootRelative`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
+- `internal/lint/cache.go`: the policy (`EnableCache`, `CloseCache`, `rootRelative`, `rootRelativeText`, `cacheSalt`, `hashTree`, `cacheable`, `cacheKey`, `cachedResult`, `storeResult`, `cachedExts`, `cachedAlert`).
+- `internal/lint/cache_scope.go`: how a file is addressed (`cacheScope`, `contentRoot`, `isCheckout`, `config`, `address`, `nameOnly`, `anchoredTo`, `relativeLiteral`).
 - `internal/lint/lint.go`: `Linter.cache`, the lookup and store around `lintFile`, and the flush when `Lint` returns.
 - `cmd/vale/main.go` (`CloseCache` once the alerts are printed), `cmd/vale/cache.go` (`cleanCacheLayout`, `startOldLayoutClean`), `cmd/vale/command.go` (the hidden `cache-clean-layout`), `cmd/vale/flag.go`, `internal/core/config.go`.
 - `cmd/vale/detach_unix.go`, `cmd/vale/detach_windows.go`, `cmd/vale/detach_other.go`: how the clean is detached from the run.
