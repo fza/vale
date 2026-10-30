@@ -275,12 +275,12 @@ func anchoredTo(label, root string) bool {
 	pattern, _ := core.SplitSection(label)
 	pattern = strings.TrimPrefix(pattern, "!")
 
-	if !strings.ContainsAny(root, globMeta+"]") {
-		for _, prefix := range []string{root + string(filepath.Separator), filepath.ToSlash(root) + "/"} {
-			if strings.HasPrefix(pattern, prefix) {
-				return true
-			}
-		}
+	// A pattern is matched against a path with forward slashes, and a
+	// backslash in it escapes what follows, so only the slashed spelling of
+	// the checkout's path can stand in a pattern as a literal.
+	slashed := filepath.ToSlash(root)
+	if !strings.ContainsAny(slashed, `*?[]{\`) && strings.HasPrefix(pattern, slashed+"/") {
+		return true
 	}
 
 	return relativeLiteral(pattern)
