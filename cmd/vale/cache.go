@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 
 	"github.com/vale-cli/vale/v3/internal/cache"
 	"github.com/vale-cli/vale/v3/internal/core"
@@ -25,6 +28,44 @@ func cleanCache(_ []string, _ *core.CLIFlags) error {
 
 	fmt.Printf("Removed %s from %s.\n", byteCount(size), dir)
 	return nil
+}
+
+// cleanCacheLayout deletes the result cache's one-file-per-entry layout from
+// the given directory. A run starts it as a process of its own, detached from
+// itself, since deleting millions of files takes longer than a run may wait.
+func cleanCacheLayout(args []string, _ *core.CLIFlags) error {
+	if len(args) != 2 || args[0] != "v0" {
+		return core.NewE100("cache-clean-layout", errors.New("usage: cache-clean-layout v0 <dir>"))
+	}
+
+	if err := cache.CleanOldLayout(args[1]); err != nil {
+		return core.NewE100("cache-clean-layout", err)
+	}
+
+	return nil
+}
+
+// startOldLayoutClean starts `vale cache-clean-layout v0` on the cache
+// directory as a process that outlives this one. It inherits no standard
+// stream, so nothing waiting on this run's output waits on it too.
+func startOldLayoutClean() error {
+	dir, err := cache.Dir()
+	if err != nil {
+		return err
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(exe, "cache-clean-layout", "v0", dir) //nolint:noctx // detached on purpose: no context of this run may end it
+	cmd.SysProcAttr = detachedProcess()
+	if err = cmd.Start(); err != nil {
+		return err
+	}
+
+	return cmd.Process.Release()
 }
 
 // byteCount renders n in the largest unit that leaves a whole part.

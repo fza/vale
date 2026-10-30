@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/vale-cli/vale/v3/internal/cache"
 	"github.com/vale-cli/vale/v3/internal/core"
@@ -59,23 +59,90 @@ func (l *Linter) EnableCache(dir, version string) error {
 		return err
 	}
 
+	scope, err := newCacheScope(l.Manager.Config)
+	if err != nil {
+		return err
+	}
+
 	c, err := cache.Open(dir, salt)
 	if err != nil {
 		return err
 	}
 	l.cache = c
+	l.cacheScope = scope
 
 	return nil
 }
 
-// cacheSalt hashes everything shared by every file of a run.
+// rootRelative rewrites every occurrence of root in the JSON body as a
+// placeholder, which leaves the paths beneath it relative to it.
 //
-// Two things go into it. The configuration is hashed as Vale resolved it,
-// which folds in the ini files, the command line and the defaults in one pass;
-// the fields deliberately left out are the ones that decide how alerts are
-// printed rather than which alerts exist. The styles path is hashed as a tree,
-// which covers the rules, the vocabularies, the ignore lists and the
-// dictionaries without naming any of them.
+// The configuration is not walked field by field: whichever field records a
+// path under the root is rewritten, including fields added after this was
+// written. A path outside the root is left as it is.
+func rootRelative(body []byte, root string) []byte {
+	quoted, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	escaped := quoted[1 : len(quoted)-1]
+
+	separator, err := json.Marshal(string(filepath.Separator))
+	if err != nil {
+		return body
+	}
+
+	body = bytes.ReplaceAll(body, append(append([]byte{}, escaped...), separator[1:len(separator)-1]...), []byte("<root>/"))
+
+	// A section's pattern names the root with forward slashes whatever the
+	// platform's separator.
+	slashed, err := json.Marshal(filepath.ToSlash(root) + "/")
+	if err != nil {
+		return body
+	}
+	body = bytes.ReplaceAll(body, slashed[1:len(slashed)-1], []byte("<root>/"))
+
+	return bytes.ReplaceAll(body, append(append([]byte{'"'}, escaped...), '"'), []byte(`"<root>"`))
+}
+
+// rootRelativeText rewrites every path under root in a configuration file as
+// rootRelative does in the resolved configuration, in either separator's
+// spelling.
+func rootRelativeText(body []byte, root string) []byte {
+	for _, prefix := range []string{root + string(filepath.Separator), filepath.ToSlash(root) + "/"} {
+		body = bytes.ReplaceAll(body, []byte(prefix), []byte("<root>/"))
+	}
+
+	return body
+}
+
+// CloseCache does the cache's upkeep, within its budget, and releases it. It is
+// meant for after a run has reported, so that no caller waits on it.
+//
+// startClean starts a process deleting the cache's earlier layout, which takes
+// longer than a run may wait; see cache.Cache.Sweep.
+func (l *Linter) CloseCache(startClean func() error) {
+	if l.cache == nil {
+		return
+	}
+
+	l.cache.Sweep(cache.SweepBudget, startClean)
+	l.cache.Close()
+}
+
+func (l *Linter) flushCache() {
+	if l.cache != nil {
+		l.cache.Flush()
+	}
+}
+
+// cacheSalt hashes everything shared by every file of a run, save the resolved
+// configuration, which names paths and is hashed per checkout; see
+// cacheScope.config.
+//
+// The styles path is hashed as a tree, which covers the rules, the
+// vocabularies, the ignore lists and the dictionaries without naming any of
+// them.
 func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 	h := sha256.New()
 
@@ -89,33 +156,6 @@ func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 		if info, statErr := os.Stat(exe); statErr == nil {
 			fmt.Fprintf(h, "binary %d %d\n", info.Size(), info.ModTime().UnixNano())
 		}
-	}
-
-	resolved, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Fprintf(h, "config %x\n", sha256.Sum256(resolved))
-
-	// The resolved configuration is hashed above, and the files it was read
-	// from are hashed here. Resolution drops what it has no field for -- a
-	// section that names no styles, checks or levels leaves no trace of itself
-	// -- so the files answer for whatever the fields do not.
-	// A nested file is recorded as a configuration file, so hashing the list
-	// covers it; naming them again here would double-count rather than add.
-	sources := append([]string{}, cfg.ConfigFiles...)
-	if cfg.Flags.Sources != "" {
-		// `--sources` names files without recording them as configuration
-		// files, so they are collected here rather than above.
-		sources = append(sources, strings.Split(cfg.Flags.Sources, ",")...)
-	}
-
-	for _, path := range sources {
-		body, readErr := os.ReadFile(path)
-		if readErr != nil {
-			continue
-		}
-		fmt.Fprintf(h, "ini %x\n", sha256.Sum256(body))
 	}
 
 	// Flags is not part of the marshalled configuration. These two decide
@@ -166,9 +206,7 @@ func hashTree(root string) ([32]byte, error) {
 			return relErr
 		}
 
-		// The styles path is Vale's own, and its files are read this way
-		// wherever a rule is loaded from one.
-		body, readErr := os.ReadFile(path) //nolint:gosec // the tree is the configured StylesPath
+		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			//nolint:nilerr // same reasoning as above
 			return nil
@@ -215,12 +253,28 @@ func (l *Linter) cacheable(src string) bool {
 	return format == "markup" && cachedExts[ext]
 }
 
-// cacheKey addresses src's alerts by its content and its path.
+// cacheKey addresses src's alerts by the configuration as its checkout sees
+// it, by its path, and by its content.
 //
 // The path is part of the key because the configuration assigns rules by path:
-// the same bytes under two names are two different questions.
+// the same bytes under two names are two different questions. Which form of the
+// path stands in the key is cacheScope.address's call. A section's condition
+// reads the path relative to the configuration's root, so when there is one,
+// that form is part of the key as well.
 func (l *Linter) cacheKey(src string, content []byte) cache.Key {
-	return l.cache.Key([]byte(filepath.ToSlash(src)), content)
+	root := l.cacheScope.contentRoot(src)
+
+	var conditionPath string
+	if l.cacheScope.conditions {
+		conditionPath = core.NewFileFields(src, "", false, l.Manager.Config).Path
+	}
+
+	return l.cache.Key(
+		l.cacheScope.config(root),
+		[]byte(l.cacheScope.address(src, root)),
+		[]byte(conditionPath),
+		content,
+	)
 }
 
 // cachedResult returns the alerts stored for src, if any.

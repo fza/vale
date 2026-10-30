@@ -71,6 +71,9 @@ type Linter struct {
 	// caching is switched off.
 	cache *cache.Cache
 
+	// cacheScope decides how the cache addresses a file; see cacheScope.
+	cacheScope *cacheScope
+
 	// inScope lists the rules whose scope matches a given block scope, keyed by
 	// the block's scope and parent.
 	//
@@ -199,6 +202,9 @@ func (l *Linter) Lint(input []string, pat string) ([]*core.File, error) {
 	// Whatever external processes this run starts, it also stops. Lint may be
 	// called again on the same Linter, so the next run starts its own.
 	defer l.stopExternal()
+
+	// What the run stored is written once, when it ends, rather than once a file.
+	defer l.flushCache()
 
 	l.prepareDITA(input)
 	defer func() { l.ditaHTML = nil }()
