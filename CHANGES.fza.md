@@ -771,3 +771,55 @@ Rejected:
 
 Accepted cost: every upstream update rewrites the change branches, `fza` and the
 release branch, so each is force-pushed to the fork remote.
+
+### Upstream pull requests
+
+A fork change goes back to `errata-ai/vale` as a pull request from a `pr/`
+branch, which the owner files; an agent never files one. A `pr/` branch starts
+at the tip of `upstream/v3`, the branch upstream merges into, and holds the
+change branch's own commits, cherry-picked with their messages as written:
+no squash, no rebase of the change branch itself, and no new commit but a
+conflict's resolution. The change branches and `fza` are left as they are, and
+nothing is force-pushed.
+
+A change branch whose own commits apply to the upstream tip and pass `go vet`
+there is a pull request of its own, `pr/<prefix>-<name>`:
+`pr/fix-vocab-spellings`. One that does not, because it builds on another
+change branch, ships in one pull request with the branch it builds on: a
+bundle. A bundle is named by its members, base first, each by a short name,
+joined by hyphens, under one prefix, `feat` when any member is a feature:
+`pr/feat-cache-nested` holds `feat/result-cache` and `feat/nested-config`.
+
+| Member | Short name |
+|---|---|
+| `feat/result-cache` | `cache` |
+| `feat/nested-config` | `nested` |
+| `fix/comment-directive` | `directive` |
+| `feat/tag-directive` | `tag` |
+| `feat/shell-code` | `shell` |
+| `feat/build-file-code` | `build-file` |
+| `feat/go-literal-scope` | `go-literal` |
+| `feat/php-ts-literal-scope` | `php-ts` |
+| `feat/vue-code` | `vue` |
+
+A `pr/` branch is ready when `go vet` and the suite pass on it and it carries no
+fork-only file: `git diff upstream/v3 pr/<name> -- CHANGES.fza.md CLAUDE.md
+UPSTREAM-MERGE.md .github .goreleaser*` prints nothing. `feat/fork-release` and
+`fix/fork-version-floor` are fork-only and never become one.
+
+Rejected:
+
+- `pr/` branches cut from the upstream release the fork is built on: the picks
+  apply cleanly, but every branch is rebased again at filing, since upstream
+  merges into its tip.
+- Stacked pull requests, one per change branch, each on the one below: upstream
+  would review and merge them in order, and a change that cannot build alone
+  cannot be judged alone either.
+- A bundle named after its top member alone, or after its base with a `bundle-`
+  prefix: either hides a member a reviewer then has to look up.
+- Members joined by `+`, `_` or `.`: longer names, or a character that reads as
+  something else.
+
+Accepted cost: a conflict with the upstream tip is resolved when the `pr/`
+branch is built and again when the tip moves before filing, and a bundle's name
+does not show where one member's name ends; the table does.
