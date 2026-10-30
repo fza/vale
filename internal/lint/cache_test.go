@@ -9,6 +9,7 @@ import (
 
 	"github.com/vale-cli/vale/v3/internal/cache"
 	"github.com/vale-cli/vale/v3/internal/core"
+	"github.com/vale-cli/vale/v3/internal/glob"
 )
 
 // cacheFixture is a styles directory, a cache directory, and a linter that
@@ -272,7 +273,8 @@ func TestUncachedLinterStoresNothing(t *testing.T) {
 	}
 }
 
-// saltFor builds the salt for a configuration the fixture's tests can mutate.
+// saltFor builds what a configuration the fixture's tests can mutate adds to
+// every key: the salt and the resolved configuration.
 func (f *cacheFixture) saltFor(edit func(*core.Config)) string {
 	f.t.Helper()
 
@@ -283,12 +285,16 @@ func (f *cacheFixture) saltFor(edit func(*core.Config)) string {
 	cfg.AddStylesPath(f.styles)
 	edit(cfg)
 
-	salt, err := cacheSalt(cfg, "v1", cacheRoot(cfg))
+	salt, err := cacheSalt(cfg, "v1")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	scope, err := newCacheScope(cfg)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 
-	return string(salt)
+	return string(salt) + string(scope.config(""))
 }
 
 // Resolution drops what it has no field for, so the configuration files are
@@ -398,17 +404,20 @@ func TestEveryFlagIsClassified(t *testing.T) {
 	}
 }
 
-// checkout writes one project -- a configuration, a style and a document --
-// under a fresh directory, as each worktree of one tree holds it.
-func checkout(t *testing.T, token, extraConfig string) string {
+const (
+	gitHead           = "ref: refs/heads/main\n"
+	everyMarkdownFile = "[*.md]\nBasedOnStyles = Demo\n"
+	wrongDocument     = "This is obviously wrong.\n"
+)
+
+func wordyRule(token string) string {
+	return "extends: existence\nmessage: \"Avoid '%s'.\"\nlevel: warning\ntokens:\n  - " + token + "\n"
+}
+
+// writeTree writes files, keyed by their slash-separated path, under root.
+func writeTree(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 
-	root := t.TempDir()
-	files := map[string]string{
-		".vale.ini":             "StylesPath = styles\nMinAlertLevel = suggestion\n" + extraConfig + "\n[*.md]\nBasedOnStyles = Demo\n",
-		"styles/Demo/Wordy.yml": "extends: existence\nmessage: \"Avoid '%s'.\"\nlevel: warning\ntokens:\n  - " + token + "\n",
-		"docs/doc.md":           "This is obviously wrong.\n",
-	}
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -418,15 +427,39 @@ func checkout(t *testing.T, token, extraConfig string) string {
 			t.Fatal(err)
 		}
 	}
+}
+
+// checkout writes one project -- a git checkout holding a configuration, a
+// style and a document -- under a fresh directory, as each worktree of one tree
+// holds it. config is the configuration past its first two lines; `{root}`
+// in it stands for the checkout's own path.
+func checkout(t *testing.T, token, config string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		".git/HEAD":             gitHead,
+		".vale.ini":             "StylesPath = styles\nMinAlertLevel = suggestion\n" + strings.ReplaceAll(config, "{root}", filepath.ToSlash(root)),
+		"styles/Demo/Wordy.yml": wordyRule(token),
+		"docs/doc.md":           wrongDocument,
+	})
 
 	return root
 }
 
-// projectLinter reads root's configuration and caches into dir.
-func projectLinter(t *testing.T, root, dir string) *Linter {
+func configOf(root string) string {
+	return filepath.Join(root, ".vale.ini")
+}
+
+func docOf(root string) string {
+	return filepath.Join(root, "docs", "doc.md")
+}
+
+// projectLinter reads the configuration at config and caches into dir.
+func projectLinter(t *testing.T, config, dir string) *Linter {
 	t.Helper()
 
-	cfg, err := core.ReadPipeline(&core.CLIFlags{Path: filepath.Join(root, ".vale.ini"), IgnoreGlobal: true}, false)
+	cfg, err := core.ReadPipeline(&core.CLIFlags{Path: config, IgnoreGlobal: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,41 +475,108 @@ func projectLinter(t *testing.T, root, dir string) *Linter {
 	return linter
 }
 
+// lintWith lints doc, spelled as given, and returns its alerts' severities.
+func lintWith(t *testing.T, config, dir, doc string) []string {
+	t.Helper()
+
+	linted, err := projectLinter(t, config, dir).Lint([]string{doc}, "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var severities []string
+	for _, file := range linted {
+		for _, a := range file.Alerts {
+			severities = append(severities, a.Severity)
+		}
+	}
+
+	return severities
+}
+
+// storedFor reports whether a linter reading config finds an entry for doc,
+// spelled as given.
+func storedFor(t *testing.T, config, dir, doc string) bool {
+	t.Helper()
+
+	content, err := os.ReadFile(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := projectLinter(t, config, dir)
+	_, found := l.cache.Get(l.cacheKey(doc, content))
+
+	return found
+}
+
 // sharedWith lints the first checkout's document, then reports whether the
 // second checkout's linter finds an entry for its own copy.
 func sharedWith(t *testing.T, first, second string) bool {
 	t.Helper()
 
 	dir := t.TempDir()
-	if _, err := projectLinter(t, first, dir).Lint([]string{filepath.Join(first, "docs", "doc.md")}, "*"); err != nil {
-		t.Fatal(err)
-	}
+	lintWith(t, configOf(first), dir, docOf(first))
 
-	doc := filepath.Join(second, "docs", "doc.md")
-	content, err := os.ReadFile(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := projectLinter(t, second, dir)
-	_, found := l.cache.Get(l.cacheKey(doc, content))
-
-	return found
+	return storedFor(t, configOf(second), dir, docOf(second))
 }
 
 // Two checkouts of one tree are one project wherever they sit, so the second
 // starts with the first one's entries.
 func TestCheckoutsOfOneTreeShareEntries(t *testing.T) {
-	first := checkout(t, "obviously", "")
-	second := checkout(t, "obviously", "")
+	first := checkout(t, "obviously", everyMarkdownFile)
+	second := checkout(t, "obviously", everyMarkdownFile)
 
 	if !sharedWith(t, first, second) {
 		t.Fatal("a second checkout of the same tree should find the first one's entries")
 	}
 }
 
+// A linked worktree marks its root with a `.git` file pointing at the
+// repository rather than with a `.git` directory.
+func TestLinkedWorktreeSharesWithItsMainCheckout(t *testing.T) {
+	main := checkout(t, "obviously", everyMarkdownFile)
+	linked := checkout(t, "obviously", everyMarkdownFile)
+	if err := os.RemoveAll(filepath.Join(linked, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, linked, map[string]string{".git": "gitdir: " + filepath.Join(main, ".git", "worktrees", "linked") + "\n"})
+
+	if !sharedWith(t, main, linked) {
+		t.Fatal("a linked worktree should find its main checkout's entries")
+	}
+}
+
+// Only a real checkout marks where a project starts. Elsewhere a file is
+// addressed by its absolute path, which no other copy shares.
+func TestNoCheckoutNoSharing(t *testing.T) {
+	markers := map[string]map[string]string{
+		"no .git":                nil,
+		".git without HEAD":      {".git/config": ""},
+		".git file without link": {".git": "not a link\n"},
+	}
+
+	for name, mark := range markers {
+		t.Run(name, func(t *testing.T) {
+			var roots []string
+			for range 2 {
+				root := checkout(t, "obviously", everyMarkdownFile)
+				if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				writeTree(t, root, mark)
+				roots = append(roots, root)
+			}
+
+			if sharedWith(t, roots[0], roots[1]) {
+				t.Fatal("copies outside any checkout should not share entries")
+			}
+		})
+	}
+}
+
 func TestCheckoutsWithOtherStylesDoNotShare(t *testing.T) {
-	first := checkout(t, "obviously", "")
-	second := checkout(t, "definitely", "")
+	first := checkout(t, "obviously", everyMarkdownFile)
+	second := checkout(t, "definitely", everyMarkdownFile)
 
 	if sharedWith(t, first, second) {
 		t.Fatal("checkouts whose styles differ should not share entries")
@@ -484,24 +584,245 @@ func TestCheckoutsWithOtherStylesDoNotShare(t *testing.T) {
 }
 
 func TestCheckoutsWithOtherConfigurationDoNotShare(t *testing.T) {
-	first := checkout(t, "obviously", "")
-	second := checkout(t, "obviously", "IgnoredScopes = code\n")
+	first := checkout(t, "obviously", everyMarkdownFile)
+	second := checkout(t, "obviously", "IgnoredScopes = code\n"+everyMarkdownFile)
 
 	if sharedWith(t, first, second) {
 		t.Fatal("checkouts whose configuration differs should not share entries")
 	}
 }
 
-// A section that names an absolute path outside the project applies in one
-// place only, so the cache falls back to absolute addresses.
-func TestAbsoluteSectionKeepsCheckoutsApart(t *testing.T) {
+// A section naming an absolute path outside the checkout could match one
+// checkout and not another, so the cache falls back to absolute addresses.
+func TestSectionOutsideTheCheckoutKeepsCheckoutsApart(t *testing.T) {
 	elsewhere := filepath.ToSlash(filepath.Join(t.TempDir(), "*.md"))
-	extra := "\n[" + elsewhere + "]\nBasedOnStyles = Demo\n"
+	config := everyMarkdownFile + "[" + elsewhere + "]\nDemo.Wordy = error\n"
 
-	first := checkout(t, "obviously", extra)
-	second := checkout(t, "obviously", extra)
+	first := checkout(t, "obviously", config)
+	second := checkout(t, "obviously", config)
 
 	if sharedWith(t, first, second) {
-		t.Fatal("checkouts with a section outside the project should not share entries")
+		t.Fatal("checkouts with a section outside them should not share entries")
+	}
+}
+
+// A section naming a path inside its own checkout reads the same in every
+// checkout once the checkout's path is taken out of it.
+func TestSectionInsideTheCheckoutIsShared(t *testing.T) {
+	config := everyMarkdownFile + "[{root}/docs/*.md]\nDemo.Wordy = error\n"
+
+	first := checkout(t, "obviously", config)
+	second := checkout(t, "obviously", config)
+
+	if !sharedWith(t, first, second) {
+		t.Fatal("checkouts whose sections name their own paths should share entries")
+	}
+}
+
+// A section's pattern is matched against the path as the run spelled it, so
+// `[docs/*.md]` applies to `docs/doc.md` and not to the same file spelled
+// absolute. The two spellings are two questions.
+func TestSpellingsOfOnePathAreTwoQuestions(t *testing.T) {
+	root := checkout(t, "obviously", everyMarkdownFile+"[docs/*.md]\nDemo.Wordy = error\n")
+	dir := t.TempDir()
+
+	if got := lintWith(t, configOf(root), dir, docOf(root)); !reflect.DeepEqual(got, []string{"warning"}) {
+		t.Fatalf("the absolute spelling should match the name pattern alone, got %v", got)
+	}
+
+	t.Chdir(root)
+	if got := lintWith(t, configOf(root), dir, filepath.Join("docs", "doc.md")); !reflect.DeepEqual(got, []string{"error"}) {
+		t.Fatalf("the relative spelling should match the directory pattern as well, got %v", got)
+	}
+}
+
+// When every section looks at a file's name alone, where the file sits and
+// how the run spelled it cannot change its answer.
+func TestNamePatternsShareAcrossWorkingDirectories(t *testing.T) {
+	first := checkout(t, "obviously", everyMarkdownFile)
+	second := checkout(t, "obviously", everyMarkdownFile)
+	dir := t.TempDir()
+
+	t.Chdir(filepath.Join(first, "docs"))
+	lintWith(t, configOf(first), dir, "doc.md")
+
+	if !storedFor(t, configOf(second), dir, docOf(second)) {
+		t.Fatal("a file linted from inside its directory should be shared with another checkout")
+	}
+}
+
+// A `[formats]` key is matched against the path like a section, so one that
+// names a directory makes where a file sits part of its answer.
+func TestFormatPatternsCountAsSections(t *testing.T) {
+	config := "[formats]\ndocs/*.mdx = md\n" + everyMarkdownFile
+	first := checkout(t, "obviously", config)
+	second := checkout(t, "obviously", config)
+	dir := t.TempDir()
+
+	t.Chdir(filepath.Join(first, "docs"))
+	lintWith(t, configOf(first), dir, "doc.md")
+
+	if storedFor(t, configOf(second), dir, docOf(second)) {
+		t.Fatal("a format pattern naming a directory should keep spellings apart")
+	}
+}
+
+// A configuration outside every checkout, a home directory's say, names the
+// same paths in each of them.
+func TestConfigurationOutsideTheCheckoutsIsShared(t *testing.T) {
+	home := t.TempDir()
+	writeTree(t, home, map[string]string{
+		".vale.ini":             "StylesPath = " + filepath.ToSlash(filepath.Join(home, "styles")) + "\n" + everyMarkdownFile,
+		"styles/Demo/Wordy.yml": wordyRule("obviously"),
+	})
+
+	var docs []string
+	for range 2 {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{".git/HEAD": gitHead, "docs/doc.md": wrongDocument})
+		docs = append(docs, docOf(root))
+	}
+
+	dir := t.TempDir()
+	lintWith(t, configOf(home), dir, docs[0])
+
+	if !storedFor(t, configOf(home), dir, docs[1]) {
+		t.Fatal("checkouts linted with one configuration outside them should share entries")
+	}
+}
+
+// Worktrees inside a main checkout, linted with its configuration, are each a
+// checkout of their own.
+func TestWorktreesInsideAMainCheckoutShare(t *testing.T) {
+	main := checkout(t, "obviously", everyMarkdownFile+"[docs/*.md]\nDemo.Wordy = error\n")
+
+	var docs []string
+	for _, name := range []string{"one", "two"} {
+		root := filepath.Join(main, ".worktrees", name)
+		writeTree(t, root, map[string]string{
+			".git":        "gitdir: " + filepath.Join(main, ".git", "worktrees", name) + "\n",
+			"docs/doc.md": wrongDocument,
+		})
+		docs = append(docs, docOf(root))
+	}
+
+	dir := t.TempDir()
+	lintWith(t, configOf(main), dir, docs[0])
+
+	if !storedFor(t, configOf(main), dir, docs[1]) {
+		t.Fatal("worktrees inside a main checkout should share entries")
+	}
+}
+
+// A section's condition reads the path relative to the configuration's root,
+// which is the same in two checkouts carrying their own configuration and not
+// for a configuration outside them.
+func TestConditionsReadThePathFromTheConfiguration(t *testing.T) {
+	const conditional = everyMarkdownFile + "[*.md if .Dir == \"docs\"]\nDemo.Wordy = error\n"
+
+	t.Run("inside the checkouts", func(t *testing.T) {
+		if !sharedWith(t, checkout(t, "obviously", conditional), checkout(t, "obviously", conditional)) {
+			t.Fatal("checkouts carrying the same conditional configuration should share entries")
+		}
+	})
+
+	t.Run("outside the checkouts", func(t *testing.T) {
+		home := t.TempDir()
+		writeTree(t, home, map[string]string{
+			".vale.ini":             "StylesPath = " + filepath.ToSlash(filepath.Join(home, "styles")) + "\n" + conditional,
+			"styles/Demo/Wordy.yml": wordyRule("obviously"),
+		})
+
+		var docs []string
+		for range 2 {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{".git/HEAD": gitHead, "docs/doc.md": wrongDocument})
+			docs = append(docs, docOf(root))
+		}
+
+		dir := t.TempDir()
+		lintWith(t, configOf(home), dir, docs[0])
+
+		if storedFor(t, configOf(home), dir, docs[1]) {
+			t.Fatal("a condition reading an absolute path should keep checkouts apart")
+		}
+	})
+}
+
+// A pattern called name-only must give the same verdict on a file wherever it
+// sits and however it is spelled.
+func TestNameOnlyPatternsIgnoreWhereAFileSits(t *testing.T) {
+	cases := map[string]bool{
+		"*":                              true,
+		"*.md":                           true,
+		"*.{md,mdx}":                     true,
+		"**/*.md":                        true,
+		"!*.md":                          true,
+		"*.md if .Meta.draft":            true,
+		"*.md if .Path == \"docs/a.md\"": true,
+		"docs/*.md":                      false,
+		"**.md":                          false,
+		"*/docs/*.md":                    false,
+		"*docs*.md":                      false,
+		"/abs/*.md":                      false,
+		"README.md":                      false,
+		"[ab]*.md":                       false,
+	}
+
+	prefixes := []string{"", "docs/", "a/b/c/", "/r/", "/r/docs/deep/", "C:/r/"}
+	names := []string{"doc.md", "doc.mdx", "doc.txt", "README", "docs.md"}
+
+	for label, want := range cases {
+		t.Run(label, func(t *testing.T) {
+			if got := nameOnly(label); got != want {
+				t.Fatalf("the pattern should be classified the other way")
+			}
+			if !want {
+				return
+			}
+
+			pattern, _ := core.SplitSection(label)
+			compiled, err := glob.Compile(pattern)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range names {
+				verdict := compiled.Match(name)
+				for _, prefix := range prefixes {
+					if compiled.Match(prefix+name) != verdict {
+						t.Errorf("the verdict on %s should not change under %q", name, prefix)
+					}
+				}
+			}
+		})
+	}
+}
+
+// An anchored pattern cannot match a file of the checkout by anything above
+// the checkout.
+func TestAnchoredPatterns(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    bool
+	}{
+		{"*.md", true},
+		{"docs/*.md", true},
+		{"/r/docs/*.md", true},
+		{"!/r/docs/*.md", true},
+		{"/r2/*.md", false},
+		{"/elsewhere/*.md", false},
+		{"~/docs/*.md", false},
+		{"C:/r/*.md", false},
+		{"d*.md", false},
+		{"{a,b}/*.md", false},
+		{"*/docs/*.md", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.pattern, func(t *testing.T) {
+			if got := anchoredTo(c.pattern, "/r"); got != c.want {
+				t.Fatalf("the pattern should be classified the other way")
+			}
+		})
 	}
 }
