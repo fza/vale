@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/vale-cli/vale/v3/internal/cache"
 	"github.com/vale-cli/vale/v3/internal/core"
@@ -55,9 +54,12 @@ type cachedAlert struct {
 // version stands for the binary: a build that reports differently must not
 // read what an earlier one wrote.
 func (l *Linter) EnableCache(dir, version string) error {
-	root := cacheRoot(l.Manager.Config)
+	salt, err := cacheSalt(l.Manager.Config, version)
+	if err != nil {
+		return err
+	}
 
-	salt, err := cacheSalt(l.Manager.Config, version, root)
+	scope, err := newCacheScope(l.Manager.Config)
 	if err != nil {
 		return err
 	}
@@ -67,42 +69,9 @@ func (l *Linter) EnableCache(dir, version string) error {
 		return err
 	}
 	l.cache = c
-	l.cacheRoot = root
+	l.cacheScope = scope
 
 	return nil
-}
-
-// cacheRoot is the directory the cache addresses a project's files and
-// configuration by, so that two checkouts of one tree -- worktrees, say --
-// share their entries; or empty, when the answers depend on where the project
-// sits and the cache addresses everything by its absolute path.
-//
-// They depend on it when no project configuration was found, and when a
-// section's glob names an absolute path outside the project. A glob under the
-// project root is written relative to it in the salt like every other path.
-func cacheRoot(cfg *core.Config) string {
-	if cfg.RootDir == "" {
-		return ""
-	}
-
-	root, err := filepath.Abs(cfg.RootDir)
-	if err != nil {
-		return ""
-	}
-
-	for section := range cfg.SecToPat {
-		if (filepath.IsAbs(section) || strings.HasPrefix(section, "~")) && !underRoot(root, section) {
-			return ""
-		}
-	}
-
-	return root
-}
-
-// underRoot reports whether path lies inside root.
-func underRoot(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // rootRelative rewrites every occurrence of root in the JSON body as a
@@ -127,6 +96,17 @@ func rootRelative(body []byte, root string) []byte {
 	return bytes.ReplaceAll(body, append(append([]byte{'"'}, escaped...), '"'), []byte(`"<root>"`))
 }
 
+// rootRelativeText rewrites every path under root in a configuration file as
+// rootRelative does in the resolved configuration, in either separator's
+// spelling.
+func rootRelativeText(body []byte, root string) []byte {
+	for _, prefix := range []string{root + string(filepath.Separator), filepath.ToSlash(root) + "/"} {
+		body = bytes.ReplaceAll(body, []byte(prefix), []byte("<root>/"))
+	}
+
+	return body
+}
+
 // CloseCache does the cache's upkeep, within its budget, and releases it. It is
 // meant for after a run has reported, so that no caller waits on it.
 //
@@ -147,19 +127,17 @@ func (l *Linter) flushCache() {
 	}
 }
 
-// cacheSalt hashes everything shared by every file of a run.
+// cacheSalt hashes everything shared by every file of a run, save the resolved
+// configuration, which names paths and is hashed per checkout; see
+// cacheScope.config.
 //
-// Two things go into it. The configuration is hashed as Vale resolved it,
-// which folds in the ini files, the command line and the defaults in one pass;
-// the fields deliberately left out are the ones that decide how alerts are
-// printed rather than which alerts exist. The styles path is hashed as a tree,
-// which covers the rules, the vocabularies, the ignore lists and the
-// dictionaries without naming any of them.
-func cacheSalt(cfg *core.Config, version, root string) ([]byte, error) {
+// The styles path is hashed as a tree, which covers the rules, the
+// vocabularies, the ignore lists and the dictionaries without naming any of
+// them.
+func cacheSalt(cfg *core.Config, version string) ([]byte, error) {
 	h := sha256.New()
 
 	fmt.Fprintf(h, "vale %s\n", version)
-	fmt.Fprintf(h, "root-relative %t\n", root != "")
 
 	// A development build reports no version, so the version alone cannot tell
 	// two of them apart and one would read what the other wrote. The running
@@ -169,34 +147,6 @@ func cacheSalt(cfg *core.Config, version, root string) ([]byte, error) {
 		if info, statErr := os.Stat(exe); statErr == nil {
 			fmt.Fprintf(h, "binary %d %d\n", info.Size(), info.ModTime().UnixNano())
 		}
-	}
-
-	resolved, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if root != "" {
-		resolved = rootRelative(resolved, root)
-	}
-	fmt.Fprintf(h, "config %x\n", sha256.Sum256(resolved))
-
-	// The resolved configuration is hashed above, and the files it was read
-	// from are hashed here. Resolution drops what it has no field for -- a
-	// section that names no styles, checks or levels leaves no trace of itself
-	// -- so the files answer for whatever the fields do not.
-	sources := append([]string{}, cfg.ConfigFiles...)
-	if cfg.Flags.Sources != "" {
-		// `--sources` names files without recording them as configuration
-		// files, so they are collected here rather than above.
-		sources = append(sources, strings.Split(cfg.Flags.Sources, ",")...)
-	}
-
-	for _, path := range sources {
-		body, readErr := os.ReadFile(path)
-		if readErr != nil {
-			continue
-		}
-		fmt.Fprintf(h, "ini %x\n", sha256.Sum256(body))
 	}
 
 	// Flags is not part of the marshalled configuration. These two decide
@@ -293,23 +243,28 @@ func (l *Linter) cacheable(src string) bool {
 	return format == "markup" && cachedExts[ext]
 }
 
-// cacheKey addresses src's alerts by its content and its path.
+// cacheKey addresses src's alerts by the configuration as its checkout sees
+// it, by its path, and by its content.
 //
 // The path is part of the key because the configuration assigns rules by path:
-// the same bytes under two names are two different questions.
-//
-// Under a cache root the path is taken relative to it, so that the same file in
-// two checkouts of one tree is one question.
+// the same bytes under two names are two different questions. Which form of the
+// path stands in the key is cacheScope.address's call. A section's condition
+// reads the path relative to the configuration's root, so when there is one,
+// that form is part of the key as well.
 func (l *Linter) cacheKey(src string, content []byte) cache.Key {
-	if l.cacheRoot != "" {
-		if abs, err := filepath.Abs(src); err == nil && underRoot(l.cacheRoot, abs) {
-			if rel, relErr := filepath.Rel(l.cacheRoot, abs); relErr == nil {
-				src = rel
-			}
-		}
+	root := l.cacheScope.contentRoot(src)
+
+	var conditionPath string
+	if l.cacheScope.conditions {
+		conditionPath = core.NewFileFields(src, "", false, l.Manager.Config).Path
 	}
 
-	return l.cache.Key([]byte(filepath.ToSlash(src)), content)
+	return l.cache.Key(
+		l.cacheScope.config(root),
+		[]byte(l.cacheScope.address(src, root)),
+		[]byte(conditionPath),
+		content,
+	)
 }
 
 // cachedResult returns the alerts stored for src, if any.
