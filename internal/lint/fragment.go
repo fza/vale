@@ -55,9 +55,7 @@ func (l *Linter) lintFragments(f *core.File) error {
 		return err
 	}
 
-	if found := updateQueries(f, l.Manager.Config); len(found) > 0 {
-		lang.Queries = found
-	}
+	l.setQueries(f, lang)
 
 	comments, err := code.GetComments([]byte(f.Content), lang)
 	if err != nil {
@@ -75,24 +73,12 @@ func (l *Linter) lintFragments(f *core.File) error {
 			continue
 		}
 
-		// This path reads a comment as the markup document it is, rebuilding
-		// a scope -- `text.paragraph` -- from the top. A string literal is
-		// not a document, and rebuilding one that way would put it back
-		// under `text`, where every rule already written would match it.
-		if core.IsLiteral(comment.Scope) {
-			continue
-		}
-
 		f.SetMetaScope(comment.Scope)
 		if l.skipsComment(comment.Scope) {
 			continue
 		}
 
-		// The file's own mapping, unless the query named a markup of its own.
-		format := comment.Format
-		if format == "" {
-			format = strings.TrimPrefix(f.NormedExt, ".")
-		}
+		format := commentFormat(comment, strings.TrimPrefix(f.NormedExt, "."))
 		err = l.lintComment(f, comment.Text, format, converted[i])
 		if err != nil {
 			return err

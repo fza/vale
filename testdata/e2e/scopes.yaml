@@ -532,6 +532,19 @@ cases:
       test.go:12:10:L.Block:'ZQX' in a raw literal
       test.go:16:36:L.Line:'ZQX' in a one-line literal
 
+  - name: literal-mapped
+    dir: literal
+    about: "a markup format mapped onto the language changes how a comment is
+      read, never whether a literal is: the literal keeps its own family and
+      reaches the same rules as without the mapping"
+    args: --config=mapped.ini .
+    exit: 1
+    want: |
+      test.go:5:20:T.Prose:'ZQX' in prose
+      test.go:10:19:L.Block:'ZQX' in a raw literal
+      test.go:12:10:L.Block:'ZQX' in a raw literal
+      test.go:16:36:L.Line:'ZQX' in a one-line literal
+
   - name: literal-unasked
     about: "with no rule naming the family, a source file is read exactly as it
       was before literals could be extracted at all"
