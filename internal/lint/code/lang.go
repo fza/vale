@@ -34,6 +34,20 @@ type Language struct {
 	Queries []core.Scope
 	Cutset  string
 	Padding padding
+	// Literals are the queries that capture the strings a program prints to
+	// a person, held apart from Queries because they run only where a rule
+	// asks for them.
+	Literals []core.Scope
+
+	// SkipLiteral reports whether a captured string literal holds something
+	// the compiler reads rather than something a person does.
+	//
+	// A language writes more than prose as a string: Go spells an import path
+	// and a struct tag that way, and neither is ever read aloud. They are
+	// structural, so they are dropped here rather than left for a rule to
+	// exclude by pattern.
+	SkipLiteral func(node *sitter.Node) bool
+
 	// Directive matches a comment addressed to a tool -- a build constraint,
 	// a linter suppression -- which is dropped rather than read. It is
 	// matched against the comment as written, delimiter included.

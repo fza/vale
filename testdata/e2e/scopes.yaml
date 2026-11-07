@@ -520,6 +520,26 @@ cases:
       test.md:5:8:T.Caps:Use 'Foo Bar' for 'foo bar'.
       test.md:5:53:T.Caps:Use 'Foo Bar' for 'foo bar'.
 
+  - name: literal
+    about: "a Go string literal is its own family, so a rule reaches one only
+      by naming `literal`, and an import path and a struct tag never reach a
+      rule at all"
+    args: .
+    exit: 1
+    want: |
+      test.go:5:20:T.Prose:'ZQX' in prose
+      test.go:10:19:L.Block:'ZQX' in a raw literal
+      test.go:12:10:L.Block:'ZQX' in a raw literal
+      test.go:16:36:L.Line:'ZQX' in a one-line literal
+
+  - name: literal-unasked
+    about: "with no rule naming the family, a source file is read exactly as it
+      was before literals could be extracted at all"
+    args: .
+    exit: 1
+    want: |
+      test.go:5:20:T.Prose:'ZQX' in prose
+
   - name: doc-group
     about: "A `doc(...)` selector may be a comma-separated group at the top
       level, as it may inside `:has(...)`: `doc(blockquote, ul)` names either
