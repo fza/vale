@@ -223,6 +223,12 @@ no way to tell them from the help text beside them. The opening quote is
 recorded as the first line's strip, the way a comment's opening delimiter is,
 so a raw string's later lines map back through the dedent alone.
 
+A markup format mapped onto the language (`[formats] go = md`) changes how a
+comment is read, never whether a literal is. Both paths extract literals on the
+same condition, and the markup path reads one as plain lines in its own family,
+as the code path does. Read as a markup document, it would be rebuilt under
+`text`, where every rule already written would match it.
+
 - `internal/core/scopes.go` — `LiteralScope`, `IsLiteral`, outside `internal/lint/code` because that
   package needs CGo and the browser build reads them too.
 - `internal/lint/code/comments.go` — `WithLiterals`, `splitLiterals`.
@@ -231,9 +237,9 @@ so a raw string's later lines map back through the dedent alone.
 - `internal/lint/code/query.go` — the `literal` capture, `trimQuotes`, the family in the scope name, the quote as the first line's `opener`.
 - `internal/lint/code/comments.go` — literals kept apart from `coalesce`, `dropDirectives` and the documentation masks, and put back in source order.
 - `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`.
-- `internal/lint/code_ts.go` — `code.WithLiterals` gated on `Manager.HasScope`.
-- `internal/lint/fragment.go` — a literal skipped on the markup path, which would rebuild it under `text`.
-- `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
+- `internal/lint/code_ts.go` — `setQueries`, `code.WithLiterals` gated on `Manager.HasScope` for both paths; `commentFormat`, which keeps a literal out of markup, `rstBatch` included.
+- `internal/lint/fragment.go` — `setQueries` and `commentFormat` on the markup path, so a `[formats]` mapping drops no literal.
+- `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal`, `literal-mapped` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
 
 ### A PHP, TypeScript and JavaScript string literal is read as Go's is
 
