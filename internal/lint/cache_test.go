@@ -378,6 +378,7 @@ func TestEveryFlagIsClassified(t *testing.T) {
 		"InExt":         true, // stdin, which is never cached
 		"InPath":        true, // same
 		"Glob":          true, // selects files, not alerts
+		"FS":            true, // where bytes are read from; the key hashes the bytes, and the browser build opens no cache
 		"Output":        true,
 		"Counts":        true, // JSON reporting only
 		"Apply":         true, // `vale fix` writes to disk; linting is unaffected

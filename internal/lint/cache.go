@@ -239,8 +239,11 @@ func hashTree(root string) ([32]byte, error) {
 }
 
 // cacheable reports whether src's alerts follow from its own bytes alone.
+//
+// A BlockHook wants every block of every file, which a stored answer does not
+// hold, so a linter with one reads each file afresh.
 func (l *Linter) cacheable(src string) bool {
-	if l.cache == nil {
+	if l.cache == nil || l.BlockHook != nil {
 		return false
 	}
 
