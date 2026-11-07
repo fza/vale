@@ -92,6 +92,7 @@ var FormatByExtension = map[string][]string{
 	`\.(?:ts|tsx|mts|cts)$`: {".ts", "code"},
 	`\.(?:typ)$`:            {".typ", "markup"},
 	`\.(?:vue)$`:            {".vue", "code"},
+	`\.(?:svelte)$`:         {".svelte", "code"},
 	`\.(?:txt)$`:            {".txt", "text"},
 	`\.(?:xml|xsd)$`:        {".xml", "markup"},
 	`\.(?:yaml|yml)$`:       {".yml", "data"},

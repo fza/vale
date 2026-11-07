@@ -655,6 +655,33 @@ cases:
     want: |
       test.vue:6:12:T.Prose:'ZQX' in prose
 
+  - name: literal-svelte
+    dir: literal
+    about: "a Svelte component is code: its script, the expressions in its
+      markup, its markup comments and its style comments are read at the lines
+      and columns they hold in the file, while the template's visible text
+      reaches no rule"
+    args: test.svelte
+    exit: 1
+    want: |
+      test.svelte:2:12:T.Prose:'ZQX' in prose
+      test.svelte:3:25:L.Line:'ZQX' in a one-line literal
+      test.svelte:6:8:T.Prose:'ZQX' in prose
+      test.svelte:7:14:L.Line:'ZQX' in a one-line literal
+      test.svelte:8:35:L.Line:'ZQX' in a one-line literal
+      test.svelte:11:6:T.Prose:'ZQX' in prose
+
+  - name: literal-unasked-svelte
+    dir: literal-unasked
+    about: "with no rule naming the family, a Svelte component is read for its
+      comments alone"
+    args: test.svelte
+    exit: 1
+    want: |
+      test.svelte:2:12:T.Prose:'ZQX' in prose
+      test.svelte:6:8:T.Prose:'ZQX' in prose
+      test.svelte:11:6:T.Prose:'ZQX' in prose
+
   - name: doc-group
     about: "A `doc(...)` selector may be a comma-separated group at the top
       level, as it may inside `:has(...)`: `doc(blockquote, ul)` names either
