@@ -18,6 +18,7 @@ func TestFormatFromExt(t *testing.T) {
 		".rmd":   {".md", "markup"},
 		".R":     {".r", "code"},
 		".qml":   {".qml", "code"},
+		".vue":   {".vue", "code"},
 	}
 	m := map[string]string{}
 	for ext, format := range extToFormat {
