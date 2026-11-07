@@ -45,6 +45,13 @@ type Language struct {
 	// read from the node it precedes; nil for a language with no such
 	// convention.
 	DocName func(*sitter.Node, []byte) string
+
+	// OpensWithName reports a documentation convention in which a comment
+	// opens with the bare name of what it documents, the one position
+	// backticks cannot reach. Go and the C family follow it; a language that
+	// does not would have a comment's first word blanked whenever the line
+	// below happened to use the same word.
+	OpensWithName bool
 }
 
 // GetLanguageFromExt returns a Language based on the given file extension.
