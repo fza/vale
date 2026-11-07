@@ -212,6 +212,29 @@ func TestSupportsVale(t *testing.T) {
 	}
 }
 
+// A fork build carries the upstream release its tag names, so a package's
+// floor is measured against that release; any other prerelease still falls
+// short of a floor naming no prerelease.
+func TestSupportsValeOnAForkBuild(t *testing.T) {
+	cases := []struct {
+		version, constraint string
+		want                bool
+	}{
+		{"v3.25.1-fza.1", ">=3.0.0", true},
+		{"v3.25.1-fza.1", ">=3.25.1", true},
+		{"v3.25.1-fza.1", ">=3.26.0", false},
+		{"v3.26.0-rc.1", ">=3.0.0", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.version+" "+tt.constraint, func(t *testing.T) {
+			withVersion(t, tt.version)
+			if got := supportsVale(tt.constraint); got != tt.want {
+				t.Errorf("a fork build should meet a floor by the release it carries, got %v", got)
+			}
+		})
+	}
+}
+
 // A manifest in meta.json names each release and the Vale it needs, on any
 // host: the archive to install is chosen before it is downloaded, and the
 // URLs can be anything.
