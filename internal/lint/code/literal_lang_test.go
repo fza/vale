@@ -6,6 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/lint/code"
 )
 
@@ -41,7 +42,7 @@ func literalComments(t *testing.T, ext, source string) []code.Comment {
 func literalTexts(comments []code.Comment) []string {
 	var texts []string
 	for _, comment := range comments {
-		if code.IsLiteral(comment.Scope) {
+		if core.IsLiteral(comment.Scope) {
 			texts = append(texts, comment.Text)
 		}
 	}
