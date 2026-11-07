@@ -24,11 +24,12 @@ consumer.
 | `.vale.ini` in any directory | Configuration | Glob sections covering that directory and the tree beneath it. |
 | `cache-clean` | CLI command | Remove every cached result, reporting how much was reclaimed. |
 | `VALE_CACHE` | Environment variable | Where to store the alerts of unchanged files. |
-| `scope: literal` | Rule scope | Match a string literal in Go, PHP, TypeScript, TSX, JavaScript or a Vue component's script. Also `literal.line` and `literal.block`. |
+| `scope: literal` | Rule scope | Match a string literal in Go, PHP, TypeScript, TSX, JavaScript, a Vue component's script, or a Svelte component's script and markup expressions. Also `literal.line` and `literal.block`. |
 | `<vale off>` … `</vale off>` | Directive | The tag form of a `vale` directive, in markup and in a source comment alike. |
 | `.sh`, `.bash`, `.zsh`, `.ksh` | Format | Read as code: only the comments are prose. |
 | `.mk`, `.mak`, `.make`, `Makefile`, `makefile`, `GNUmakefile` | Format | Read as code: only the comments are prose. |
 | `.vue` | Format | Read as code: the script blocks alone, with the TypeScript grammar. The template and the style reach no rule. |
+| `.svelte` | Format | Read as code: the script blocks and every markup expression with the TypeScript grammar, the markup comments, and the style's comments. The template's visible text reaches no rule. |
 
 ## Correctness
 
@@ -332,6 +333,72 @@ Rejected:
 - `internal/lint/code/vue.go` -- `Vue`, `vueScripts`, `vueScript`, `vueScriptEnd`.
 - `internal/lint/code/comments.go` -- `Isolate` applied before the parse in `GetComments`.
 - `internal/core/util_test.go` -- `TestFormatFromExt`; `internal/lint/code/vue_test.go`, with fixtures under `internal/lint/code/testdata/vue/`; `testdata/e2e/scopes.yaml` cases `literal-vue` and `literal-unasked-vue`.
+
+### A Svelte component is parsed as code
+
+A `.svelte` file matched no format, so Vale read it whole as plain text. It is
+now code, in every form Svelte 3, 4 and 5 write:
+
+- every script block, `module`, `context="module"`, `lang="ts"` and `generics`
+  alike, read with the TypeScript grammar;
+- every JavaScript expression the markup holds: `{...}` in text and in an
+  attribute value, quoted or not, a spread, a shorthand, an event handler, the
+  heads of `{#if}`, `{:else if}`, `{#each ... as ... (key)}`, `{#await}`,
+  `{:then}`, `{:catch}`, `{#key}` and `{#snippet name(parameters)}`, and the
+  tags `{@html}`, `{@render}`, `{@const}` and `{@debug}`;
+- the markup's `<!-- -->` comments, less those addressed to a tool
+  (`svelte-ignore`, `prettier-ignore`, `eslint-`, `biome-ignore`);
+- the comments of every `<style>` block, the `//` line comments of SCSS and Less
+  among them.
+
+Comments are read as a script's are, and string literals where a rule names the
+literal family. The template's visible text is not read, for the reason the Vue
+template is not. A script block whose `type` names data, such as
+`application/ld+json`, holds no JavaScript and is not read. A `.svelte.js` or
+`.svelte.ts` module is JavaScript or TypeScript by its extension already.
+
+A tree-sitter grammar for Svelte finds the parts. The JavaScript is read the way
+a Vue script is: the component handed to the TypeScript grammar with everything
+else blanked, line breaks kept, so every node already stands at its line and
+column in the file. Each markup expression opens with a `(` written into the
+blank before it, its `{` or the space after its keyword: bare,
+`{'Save the file'}` would be a statement holding only a string, which the
+grammar reads as a directive like `'use strict'`. The parenthesis stays open,
+since closing it changes nothing the grammar reports. An expression left open
+is a syntax error the Svelte compiler refuses as well; the grammar reads no
+expression from it, and the parts before it are read as usual. The markup
+comments and the style are read by
+grammars of their own over the same file, the style through the CSS grammar,
+which knows a `//` line comment as a node of its own; a `//` inside `url(...)`
+stays part of the URL.
+
+The grammar is tree-sitter-svelte v1.0.2, vendored as its C sources and built
+against the tree-sitter runtime every other grammar here uses.
+
+Rejected:
+
+- The grammar the tree-sitter module bundles: it predates Svelte 5 and reads
+  neither `{#snippet}` nor `{@render}`.
+- The grammar's own Go bindings: they target the other Go tree-sitter runtime,
+  so the fork would carry two runtimes, or move every other grammar over.
+- A Svelte grammar packaged elsewhere for Go: no dependents, a third runtime,
+  and no confirmed Svelte 5 support.
+- A scanner written by hand: matching a `{...}` expression's braces needs a
+  JavaScript lexer's view of strings, template literals, comments and regular
+  expression literals, which the grammars already hold.
+- Reading the visible text, and reading the script blocks alone: the first
+  breaks with the Vue component's reasoning, the second leaves the markup's
+  comments and the strings its expressions show unread.
+
+Accepted cost: the fork owns the vendored grammar; an update replaces its
+sources.
+
+- `internal/core/format.go` -- `.svelte` mapped to code.
+- `internal/lint/code/svelte/` -- the vendored grammar and its binding.
+- `internal/lint/code/svelte.go` -- `Svelte`, `svelteMarkup`, `svelteStyle`, `svelteCode`, `svelteStyles`, `openParenthesis`, `scriptType`.
+- `internal/lint/code/lang.go` -- `Language.Embedded`, and `.svelte` in `GetLanguageFromExt`.
+- `internal/lint/code/comments.go` -- `GetComments` reading each embedded grammar and merging in line order; `grammarComments`.
+- `internal/core/util_test.go` -- `TestFormatFromExt`; `internal/lint/code/svelte_test.go`, with fixtures under `internal/lint/code/testdata/svelte/`; `testdata/e2e/scopes.yaml` cases `literal-svelte` and `literal-unasked-svelte`.
 
 ### A directory carries its own configuration
 
@@ -863,6 +930,7 @@ joined by hyphens, under one prefix, `feat` when any member is a feature:
 | `feat/go-literal-scope` | `go-literal` |
 | `feat/php-ts-literal-scope` | `php-ts` |
 | `feat/vue-code` | `vue` |
+| `feat/svelte-code` | `svelte` |
 
 A `pr/` branch is ready when `go vet` and the suite pass on it and it carries no
 fork-only file: `git diff upstream/v3 pr/<name> -- CHANGES.fza.md CLAUDE.md
