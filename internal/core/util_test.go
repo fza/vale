@@ -11,14 +11,15 @@ import (
 
 func TestFormatFromExt(t *testing.T) {
 	extToFormat := map[string][]string{
-		".py":    {".py", "code"},
-		".cxx":   {".cpp", "code"},
-		".mdown": {".md", "markup"},
-		".Rmd":   {".md", "markup"},
-		".rmd":   {".md", "markup"},
-		".R":     {".r", "code"},
-		".qml":   {".qml", "code"},
-		".vue":   {".vue", "code"},
+		".py":     {".py", "code"},
+		".cxx":    {".cpp", "code"},
+		".mdown":  {".md", "markup"},
+		".Rmd":    {".md", "markup"},
+		".rmd":    {".md", "markup"},
+		".R":      {".r", "code"},
+		".qml":    {".qml", "code"},
+		".vue":    {".vue", "code"},
+		".svelte": {".svelte", "code"},
 	}
 	m := map[string]string{}
 	for ext, format := range extToFormat {

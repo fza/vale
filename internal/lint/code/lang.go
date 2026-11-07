@@ -62,6 +62,11 @@ type Language struct {
 	// what the grammar reports is already a line and column in the file.
 	Isolate func(source []byte) []byte
 
+	// Embedded are the further grammars a file holds besides this one, each
+	// read over the same source with an Isolate of its own: the markup
+	// comments and the style of a Svelte component around its scripts.
+	Embedded []*Language
+
 	// Directive matches a comment addressed to a tool -- a build constraint,
 	// a linter suppression -- which is dropped rather than read. It is
 	// matched against the comment as written, delimiter included.
@@ -163,6 +168,8 @@ func languageFor(ext string) *Language {
 		return Tsx()
 	case ".vue":
 		return Vue()
+	case ".svelte":
+		return Svelte()
 	case ".proto":
 		return Protobuf()
 	case ".qml":

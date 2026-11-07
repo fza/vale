@@ -178,6 +178,26 @@ func WithLiterals(lang *Language) {
 
 // GetComments returns all comments in the given source code.
 func GetComments(source []byte, lang *Language) ([]Comment, error) {
+	comments, err := grammarComments(source, lang)
+	if err != nil || len(lang.Embedded) == 0 {
+		return comments, err
+	}
+
+	for _, embedded := range lang.Embedded {
+		found, embeddedErr := grammarComments(source, embedded)
+		if embeddedErr != nil {
+			return comments, embeddedErr
+		}
+		comments = append(comments, found...)
+	}
+	sort.SliceStable(comments, func(p, q int) bool {
+		return comments[p].Line < comments[q].Line
+	})
+	return comments, nil
+}
+
+// grammarComments returns the comments one grammar finds in the source.
+func grammarComments(source []byte, lang *Language) ([]Comment, error) {
 	var comments []Comment
 
 	if lang.Isolate != nil {
