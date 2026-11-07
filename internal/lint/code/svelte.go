@@ -108,14 +108,13 @@ func svelteCode(source []byte) []byte {
 func svelteStyles(source []byte) []byte {
 	blanked := blankAll(source)
 	walkSvelte(source, func(node *sitter.Node) bool {
-		switch node.Type() {
-		case "style_element":
-			if body := childOfType(node, "raw_text"); body != nil {
-				copy(blanked[body.StartByte():body.EndByte()], source[body.StartByte():body.EndByte()])
-			}
-			return false
+		if node.Type() != "style_element" {
+			return true
 		}
-		return true
+		if body := childOfType(node, "raw_text"); body != nil {
+			keep(blanked, source, body)
+		}
+		return false
 	})
 	return blanked
 }

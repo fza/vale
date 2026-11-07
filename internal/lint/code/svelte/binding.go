@@ -9,8 +9,8 @@
 // vendored unchanged; updating the grammar means replacing them.
 package svelte
 
-//#include "tree_sitter/parser.h"
-//TSLanguage *tree_sitter_svelte();
+// #include "tree_sitter/parser.h"
+// TSLanguage *tree_sitter_svelte();
 import "C"
 
 import (
