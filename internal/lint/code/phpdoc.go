@@ -154,9 +154,9 @@ func phpTagEnd(s string, at, lineEnd int) int {
 		return scanPHPMethod(s, nameEnd)
 	case phpTagLine:
 		return lineEnd
-	default:
-		return nameEnd
+	case phpTagName:
 	}
+	return nameEnd
 }
 
 func phpShapeOf(name string) phpTagShape {
@@ -249,8 +249,8 @@ func scanPHPType(s string, at, fallback int) int {
 		}
 		// `&$name` is a variable passed by reference: no type atom opens with
 		// `$`, so the scan stops before it.
-		next, ok := scanPHPTypeAtom(s, skipBlanks(s, op+1))
-		if !ok {
+		next, found := scanPHPTypeAtom(s, skipBlanks(s, op+1))
+		if !found {
 			return end
 		}
 		end = next
@@ -280,15 +280,7 @@ func scanPHPTypeAtom(s string, at int) (int, bool) {
 		}
 		i = end
 	case isPHPNameByte(c) || c == '\\':
-		for i < len(s) {
-			if isPHPNameByte(s[i]) || s[i] == '\\' || s[i] == '-' {
-				i++
-			} else if strings.HasPrefix(s[i:], "::") {
-				i += 2
-			} else {
-				break
-			}
-		}
+		i = scanPHPTypeName(s, i)
 	default:
 		return at, false
 	}
@@ -315,6 +307,22 @@ func scanPHPTypeAtom(s string, at int) (int, bool) {
 		}
 	}
 	return i, true
+}
+
+// scanPHPTypeName reads a qualified name, a keyword such as
+// `non-empty-string`, or a class constant: `\Foo\Bar`, `Status::ACTIVE`.
+func scanPHPTypeName(s string, i int) int {
+	for i < len(s) {
+		switch {
+		case isPHPNameByte(s[i]) || s[i] == '\\' || s[i] == '-':
+			i++
+		case strings.HasPrefix(s[i:], "::"):
+			i += 2
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 // phpVarEnd reads `$name`, `&$name`, `...$name` or `&...$name` at s[at].
