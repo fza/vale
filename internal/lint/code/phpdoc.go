@@ -28,6 +28,10 @@ const (
 	phpTagTemplate                      // a name, then an optional bound: @template T of Foo
 	phpTagMethod                        // a signature: @method static Foo bar(int $x)
 	phpTagLine                          // the whole line, which holds no prose: @author, @license
+	phpTagAlias                         // a name, an optional `=`, then a type: @phpstan-type
+	phpTagIgnore                        // identifiers up to a parenthesized reason: @phpstan-ignore
+	phpTagExample                       // a location, then up to two line numbers: @example
+	phpTagRows                          // the whole line and each data row after it: @testWith
 )
 
 var phpTagShapes = map[string]phpTagShape{
@@ -74,18 +78,59 @@ var phpTagShapes = map[string]phpTagShape{
 	"package":    phpTagLine,
 	"subpackage": phpTagLine,
 	"category":   phpTagLine,
-	"example":    phpTagLine,
 	"filesource": phpTagLine,
+
+	"example": phpTagExample,
+
+	"param-closure-this":                 phpTagTypeAndVar,
+	"param-immediately-invoked-callable": phpTagTypeAndVar,
+	"param-later-invoked-callable":       phpTagTypeAndVar,
+	"template-extends":                   phpTagType,
+	"template-implements":                phpTagType,
+	"template-use":                       phpTagType,
+	"require-extends":                    phpTagType,
+	"require-implements":                 phpTagType,
+	"self-out":                           phpTagType,
+	"this-out":                           phpTagType,
+	"if-this-is":                         phpTagType,
+
+	// PHPUnit's annotations. `@testdox` carries a sentence and stays prose.
+	"dataprovider":                   phpTagReference,
+	"group":                          phpTagReference,
+	"ticket":                         phpTagReference,
+	"usesdefaultclass":               phpTagReference,
+	"backupglobals":                  phpTagReference,
+	"backupstaticattributes":         phpTagReference,
+	"preserveglobalstate":            phpTagReference,
+	"expectedexceptioncode":          phpTagReference,
+	"expectedexception":              phpTagType,
+	"depends":                        phpTagLine,
+	"requires":                       phpTagLine,
+	"expectedexceptionmessageregexp": phpTagLine,
+	"testwith":                       phpTagRows,
 }
 
 // The analysers prefix their own variants of the standard tags:
 // `@phpstan-param`, `@psalm-return`, `@phan-var`.
 var phpToolPrefixes = []string{"phpstan-", "psalm-", "phan-"}
 
+// phpToolTagShapes holds the analysers' tags whose unprefixed name means
+// something else: `@type` is phpDocumentor's alias of `@var`, and `@ignore`
+// takes a description.
+var phpToolTagShapes = map[string]phpTagShape{
+	"phpstan-type":        phpTagAlias,
+	"psalm-type":          phpTagAlias,
+	"phpstan-import-type": phpTagLine,
+	"psalm-import-type":   phpTagLine,
+	"phpstan-ignore":      phpTagIgnore,
+	"psalm-suppress":      phpTagLine,
+}
+
 var (
 	phpInlineTag = regexp.MustCompile(`\{@[A-Za-z][\w\\-]*[^}\n]*\}`)
 	phpVariable  = regexp.MustCompile(`\$[A-Za-z_\x80-\xff][\w\x80-\xff]*`)
 	phpVersion   = regexp.MustCompile(`^v?\d[\w.+-]*`)
+	phpLineCount = regexp.MustCompile(`^\d+`)
 )
 
 // PHPDoc masks a PHPDoc block's tag syntax: each block tag with the type,
@@ -129,7 +174,9 @@ func phpTagEnd(s string, at, lineEnd int) int {
 
 	if nameEnd < len(s) && s[nameEnd] == '(' {
 		// An annotation call: `@ORM\ManyToOne(fetch="EAGER")`.
-		if end, ok := balancedEnd(s, nameEnd); ok {
+		// Its arguments hold values and expressions, never a generic type, so
+		// `<` and `>` there compare and are no brackets.
+		if end, ok := balancedEnd(s, nameEnd, false); ok {
 			return end
 		}
 		return lineEnd
@@ -154,13 +201,85 @@ func phpTagEnd(s string, at, lineEnd int) int {
 		return scanPHPMethod(s, nameEnd)
 	case phpTagLine:
 		return lineEnd
+	case phpTagAlias:
+		return scanPHPAlias(s, nameEnd)
+	case phpTagIgnore:
+		if reason := strings.IndexByte(s[nameEnd:lineEnd], '('); reason >= 0 {
+			return trimBlanksBefore(s, nameEnd+reason, nameEnd)
+		}
+		return lineEnd
+	case phpTagExample:
+		return scanPHPExample(s, nameEnd)
+	case phpTagRows:
+		return phpRowsEnd(s, lineEnd)
 	case phpTagName:
 	}
 	return nameEnd
 }
 
+// scanPHPAlias reads `Name [=] Type`.
+func scanPHPAlias(s string, at int) int {
+	end := scanToken(s, skipBlanks(s, at), at)
+	if end == at {
+		return at
+	}
+	from := skipBlanks(s, end)
+	if from < len(s) && s[from] == '=' {
+		from = skipBlanks(s, from+1)
+	}
+	return scanPHPType(s, from, end)
+}
+
+// scanPHPExample reads a location and up to two line numbers after it: the
+// first line to show and how many.
+func scanPHPExample(s string, at int) int {
+	end := scanToken(s, skipBlanks(s, at), at)
+	for range 2 {
+		from := skipBlanks(s, end)
+		loc := phpLineCount.FindStringIndex(s[from:])
+		if loc == nil || (from+loc[1] < len(s) && !isBlank(s[from+loc[1]]) && s[from+loc[1]] != '\n') {
+			break
+		}
+		end = from + loc[1]
+	}
+	return end
+}
+
+// phpRowsEnd returns the end of the last line in the run after lineEnd whose
+// first character is `[`: `@testWith` lists one data row per line.
+func phpRowsEnd(s string, lineEnd int) int {
+	end := lineEnd
+	for end < len(s) {
+		next := skipBlanks(s, end+1)
+		if next >= len(s) || s[next] != '[' {
+			break
+		}
+		rowEnd := strings.IndexByte(s[next:], '\n')
+		if rowEnd < 0 {
+			return len(s)
+		}
+		end = next + rowEnd
+	}
+	return end
+}
+
+// trimBlanksBefore steps back from at over spaces and tabs, not past floor.
+func trimBlanksBefore(s string, at, floor int) int {
+	for at > floor && isBlank(s[at-1]) {
+		at--
+	}
+	return at
+}
+
+func isBlank(c byte) bool {
+	return c == ' ' || c == '\t'
+}
+
 func phpShapeOf(name string) phpTagShape {
 	name = strings.ToLower(name)
+	if shape, ok := phpToolTagShapes[name]; ok {
+		return shape
+	}
 	for _, prefix := range phpToolPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			name = strings.TrimPrefix(name, prefix)
@@ -175,6 +294,10 @@ func phpShapeOf(name string) phpTagShape {
 
 // scanPHPTypeAndVar reads `[Type] [$var]` after a tag; either may be absent,
 // and a variable may be passed by reference or be variadic.
+//
+// A type whose brackets do not close, `array<string $x`, still names the
+// variable after it: the syntax runs through that variable, and only what
+// follows is the description.
 func scanPHPTypeAndVar(s string, at int) int {
 	from := skipBlanks(s, at)
 	if end, ok := phpVarEnd(s, from); ok {
@@ -187,6 +310,15 @@ func scanPHPTypeAndVar(s string, at int) int {
 	}
 	if varEnd, ok := phpVarEnd(s, skipBlanks(s, end)); ok {
 		return varEnd
+	}
+	if end < len(s) && strings.IndexByte("<{([", s[end]) >= 0 {
+		line := s[end:]
+		if lineEnd := strings.IndexByte(line, '\n'); lineEnd >= 0 {
+			line = line[:lineEnd]
+		}
+		if loc := phpVariable.FindStringIndex(line); loc != nil {
+			return end + loc[1]
+		}
 	}
 	return end
 }
@@ -225,7 +357,7 @@ func scanPHPMethod(s string, at int) int {
 		nameEnd++
 	}
 	if nameEnd > name && nameEnd < len(s) && s[nameEnd] == '(' {
-		if signatureEnd, ok := balancedEnd(s, nameEnd); ok {
+		if signatureEnd, ok := balancedEnd(s, nameEnd, true); ok {
 			return signatureEnd
 		}
 	}
@@ -268,7 +400,7 @@ func scanPHPTypeAtom(s string, at int) (int, bool) {
 
 	switch c := s[i]; {
 	case c == '(':
-		end, ok := balancedEnd(s, i)
+		end, ok := balancedEnd(s, i, true)
 		if !ok {
 			return at, false
 		}
@@ -288,7 +420,7 @@ func scanPHPTypeAtom(s string, at int) (int, bool) {
 	for i < len(s) {
 		switch s[i] {
 		case '<', '{', '(':
-			end, ok := balancedEnd(s, i)
+			end, ok := balancedEnd(s, i, true)
 			if !ok {
 				return i, true
 			}
@@ -344,11 +476,16 @@ func phpVarEnd(s string, at int) (int, bool) {
 // balancedEnd returns the index just past the bracket that closes the one at
 // s[at], or false when the brackets do not balance. Quoted strings are
 // skipped, so a bracket inside an annotation's string argument does not count.
-func balancedEnd(s string, at int) (int, bool) {
+// angles says whether `<` and `>` pair up, as they do in a generic type.
+func balancedEnd(s string, at int, angles bool) (int, bool) {
 	closers := map[byte]byte{'(': ')', '[': ']', '{': '}', '<': '>'}
 	var stack []byte
 	for i := at; i < len(s); i++ {
-		switch c := s[i]; c {
+		c := s[i]
+		if !angles && (c == '<' || c == '>') {
+			continue
+		}
+		switch c {
 		case '"', '\'':
 			end, ok := quotedEnd(s, i)
 			if !ok {
