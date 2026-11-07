@@ -91,6 +91,15 @@ var commands = map[string]command{
 			"each entry into the StylesPath. Run this after adding a package,\n" +
 			"and in CI before linting.",
 	},
+	"cache-clean": {
+		Run:     cleanCache,
+		Summary: "Remove every cached result.",
+		Usage:   "cache-clean",
+		Detail: "Vale reuses the alerts of a file that has not changed since it\n" +
+			"last saw it. Entries are addressed by the file's content and by\n" +
+			"the configuration, so a change to either is picked up on its own;\n" +
+			"this is for reclaiming the space, or for starting over.",
+	},
 	"test": {
 		Run:     runTests,
 		Summary: "Run the test cases kept beside a configuration's rules.",
@@ -115,6 +124,15 @@ var commands = map[string]command{
 	"tag":            {Run: runTag, Summary: "Print a file's part-of-speech tags.", Hidden: true},
 	"dc":             {Run: printConfig, Summary: "Alias for `ls-config`.", Hidden: true},
 	"load":           {Run: loadConfigs, Summary: "Print a merged pair of configurations.", Hidden: true},
+
+	// Started by a run, detached from it, to delete the result cache's
+	// earlier layout.
+	"cache-clean-layout": {
+		Run:     cleanCacheLayout,
+		Summary: "Delete the one-file-per-entry layout of the result cache.",
+		Usage:   "cache-clean-layout v0 <dir>",
+		Hidden:  true,
+	},
 }
 
 func fix(args []string, flags *core.CLIFlags) error {
