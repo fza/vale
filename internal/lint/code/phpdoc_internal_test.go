@@ -86,8 +86,99 @@ func TestPHPDocMasks(t *testing.T) {
 			text: "@ORM\\Column(type=\"string\"\nThe column holds the name.\n" +
 				"@param array<string $x the broken type\n" +
 				"@param array<int} $y the mismatched type\n",
-			masked: []string{"@ORM\\Column(type=\"string\"", "@param array"},
-			prose:  []string{"The column holds the name", "the broken type", "array<int}"},
+			masked: []string{"@ORM\\Column(type=\"string\"", "@param array<string $x", "@param array<int} $y"},
+			prose:  []string{"The column holds the name", "the broken type", "the mismatched type"},
+		},
+		{
+			name:   "a broken type with no variable after it is masked to its last whole part",
+			text:   "@return array<string the broken result\n",
+			masked: []string{"@return array"},
+			prose:  []string{"<string the broken result"},
+		},
+		{
+			name: "an angle bracket inside an annotation's arguments is no bracket",
+			text: "@Assert\\Expression(value > 3,\n" +
+				"    message=\"too small\")\n" +
+				"@Assert\\Choice(choices={1 => \"a\", 2 => \"b\"})\n" +
+				"@Assert\\Expression(value < 3) The value stays small.\n",
+			masked: []string{
+				"@Assert\\Expression(value > 3,\n    message=\"too small\")",
+				"@Assert\\Choice(choices={1 => \"a\", 2 => \"b\"})",
+				"@Assert\\Expression(value < 3)",
+			},
+			prose: []string{"The value stays small"},
+		},
+		{
+			name: "PHPUnit tags mask what they name",
+			text: "@dataProvider provideInvalidEmails\n" +
+				"@depends clone testCreatesTheUser\n" +
+				"@group slow-integration\n" +
+				"@ticket GVB-123\n" +
+				"@requires PHP >= 8.1\n" +
+				"@requires extension mysqli\n" +
+				"@expectedException \\Foo\\BarException when the input is empty\n" +
+				"@usesDefaultClass \\Foo\\Bar\n" +
+				"@backupGlobals enabled\n" +
+				"@testdox Rejects an empty address\n",
+			masked: []string{
+				"@dataProvider provideInvalidEmails", "@depends clone testCreatesTheUser",
+				"@group slow-integration", "@ticket GVB-123", "@requires PHP >= 8.1",
+				"@requires extension mysqli", "@expectedException \\Foo\\BarException",
+				"@usesDefaultClass \\Foo\\Bar", "@backupGlobals enabled", "@testdox",
+			},
+			prose: []string{"when the input is empty", "Rejects an empty address"},
+		},
+		{
+			name: "testWith masks its data rows, on its line and the lines after it",
+			text: "@testWith [\"a\", 1]\n" +
+				"          [\"bc\", 2]\n" +
+				"Each row is one case.\n",
+			masked: []string{"@testWith [\"a\", 1]\n          [\"bc\", 2]"},
+			prose:  []string{"Each row is one case"},
+		},
+		{
+			name: "the analysers' own tags mask their syntax",
+			text: "@phpstan-type UserShape array{name: string, age: int}\n" +
+				"@psalm-type Ids = list<positive-int>\n" +
+				"@phpstan-import-type UserShape from \\App\\Repo\n" +
+				"@psalm-suppress InvalidArgument, MixedAssignment\n" +
+				"@phpstan-ignore argument.type (the legacy caller passes a string)\n" +
+				"@param-closure-this \\App\\Builder $this\n" +
+				"@template-extends \\App\\Base<int>\n" +
+				"@phpstan-require-extends \\App\\Model\n" +
+				"@phpstan-self-out self<string>\n" +
+				"@psalm-if-this-is Foo<int>\n" +
+				"@ignore the old entry point\n" +
+				"@type int the legacy alias of var\n",
+			masked: []string{
+				"@phpstan-type UserShape array{name: string, age: int}",
+				"@psalm-type Ids = list<positive-int>",
+				"@phpstan-import-type UserShape from \\App\\Repo",
+				"@psalm-suppress InvalidArgument, MixedAssignment",
+				"@phpstan-ignore argument.type",
+				"@param-closure-this \\App\\Builder $this",
+				"@template-extends \\App\\Base<int>",
+				"@phpstan-require-extends \\App\\Model",
+				"@phpstan-self-out self<string>",
+				"@psalm-if-this-is Foo<int>",
+				"@ignore", "@type int",
+			},
+			prose: []string{
+				"the legacy caller passes a string", "the old entry point",
+				"the legacy alias of var",
+			},
+		},
+		{
+			name:   "an example names a file and the lines to show",
+			text:   "@example demo/send.php 10 5 sends one mail\n",
+			masked: []string{"@example demo/send.php 10 5"},
+			prose:  []string{"sends one mail"},
+		},
+		{
+			name:   "a tag named inside a sentence is prose, as PHPDoc reads it",
+			text:   "See also @param and @return for the rest.\n",
+			masked: nil,
+			prose:  []string{"See also @param and @return for the rest"},
 		},
 		{
 			name:   "a quoted argument may hold a closing bracket",
@@ -131,6 +222,16 @@ func TestPHPDocMasks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			checkMasks(t, PHPDoc(tt.text), tt.text, tt.masked, tt.prose)
 		})
+	}
+}
+
+func TestPHPDocIgnoreMaskStopsBeforeTheBlankOpeningItsReason(t *testing.T) {
+	text := "@phpstan-ignore argument.type   (the legacy caller passes a string)\n"
+	want := Mask{0, len("@phpstan-ignore argument.type")}
+	for _, m := range PHPDoc(text) {
+		if m[0] == 0 && m != want {
+			t.Errorf("the mask should end at the identifiers, leaving the blanks before the reason; masks %v", m)
+		}
 	}
 }
 
