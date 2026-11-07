@@ -241,6 +241,22 @@ func StyleName(rule string) string {
 	return rule
 }
 
+// SettingKeys are the configuration keys that can carry a setting for a rule,
+// most specific first: the rule's own name, then every ancestor prefix of it,
+// ending at the style.
+//
+// A rule's name spans the subdirectories it sits under, and a style's own name
+// may hold a dot, so a setting given for a group between the two --
+// `House.Literals = NO` over `House.Literals.TwoWordVerb` -- sits at neither
+// end and has to be found in between.
+func SettingKeys(rule string) []string {
+	keys := []string{rule}
+	for i := strings.LastIndex(rule, "."); i > 0; i = strings.LastIndex(rule[:i], ".") {
+		keys = append(keys, rule[:i])
+	}
+	return keys
+}
+
 // StringInSlice determines if `slice` contains the string `a`.
 func StringInSlice(a string, slice []string) bool {
 	for _, b := range slice {
