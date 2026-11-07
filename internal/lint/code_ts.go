@@ -36,17 +36,7 @@ func (l *Linter) lintCode(f *core.File) error {
 		return l.lintCodeOld(f)
 	}
 
-	switch found := updateQueries(f, l.Manager.Config); {
-	// A view supplying its own queries says what to extract in full, so
-	// nothing is added on top of one.
-	case len(found) > 0:
-		lang.Queries = found
-	// A string literal is extracted only where a rule asks for it: the family
-	// sits outside `text`, so a style naming it nowhere can make no use of
-	// one, and a file keeps costing what it did.
-	case l.Manager.HasScope(core.LiteralScope):
-		code.WithLiterals(lang)
-	}
+	l.setQueries(f, lang)
 
 	comments, err := code.GetComments([]byte(f.Content), lang)
 	if err != nil {
@@ -83,6 +73,34 @@ func (l *Linter) lintCode(f *core.File) error {
 	return nil
 }
 
+// setQueries says what to extract from a file. A view supplying its own
+// queries says it in full, so nothing is added on top of one. A string
+// literal is extracted only where a rule asks for it: the family sits outside
+// `text`, so a style naming it nowhere can make no use of one, and a file
+// keeps costing what it did.
+func (l *Linter) setQueries(f *core.File, lang *code.Language) {
+	switch found := updateQueries(f, l.Manager.Config); {
+	case len(found) > 0:
+		lang.Queries = found
+	case l.Manager.HasScope(core.LiteralScope):
+		code.WithLiterals(lang)
+	}
+}
+
+// commentFormat is the markup a comment is read as: the one its query named,
+// else fallback. A string literal is never markup, whatever is mapped onto
+// the file: read as a document, it would be rebuilt under `text`, where every
+// rule already written would match it.
+func commentFormat(comment code.Comment, fallback string) string {
+	switch {
+	case core.IsLiteral(comment.Scope):
+		return ""
+	case comment.Format != "":
+		return comment.Format
+	}
+	return fallback
+}
+
 // rstBatch converts every comment written in reStructuredText in one
 // Docutils call, and returns each one's HTML by index. fallback is the
 // format a comment has when its query named none. Nothing is returned when
@@ -105,11 +123,7 @@ func (l *Linter) rstBatch(f *core.File, comments []code.Comment, fallback string
 	}()
 
 	for i, c := range comments {
-		format := c.Format
-		if format == "" {
-			format = fallback
-		}
-		if format != "rst" || l.skipsComment(c.Scope) {
+		if commentFormat(c, fallback) != "rst" || l.skipsComment(c.Scope) {
 			continue
 		}
 
