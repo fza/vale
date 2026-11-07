@@ -48,6 +48,14 @@ type Language struct {
 	// exclude by pattern.
 	SkipLiteral func(node *sitter.Node) bool
 
+	// LiteralText names the node types inside a string literal that hold the
+	// literal's own text. Every other child is code interpolated into it --
+	// PHP's `{$order->id}`, a template literal's `${count}` -- and is masked
+	// the way a code span in a comment is, so the sentence around it still
+	// reads and keeps its columns. Nil for a language whose strings
+	// interpolate nothing.
+	LiteralText map[string]bool
+
 	// Directive matches a comment addressed to a tool -- a build constraint,
 	// a linter suppression -- which is dropped rather than read. It is
 	// matched against the comment as written, delimiter included.
