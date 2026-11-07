@@ -96,6 +96,27 @@ cases:
       live.md:6:9:T.W:'really'
       live.md:6:25:T.Passive:passive 'was written'
 
+  - name: in a nested configuration
+    about: a nested .vale.ini's condition applies beneath its own directory,
+      and a file elsewhere meeting the same condition is linted as before
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        [*.md]
+        BasedOnStyles = T
+      sub/.vale.ini: |
+        [*.md if .Meta.published == false]
+        BasedOnStyles =
+    args: --output=line .
+    exit: 1
+    want: |
+      _partial.md:1:9:T.W:'really'
+      draft.md:6:9:T.W:'really'
+      draft.md:6:29:T.Passive:passive 'was written'
+      live.md:6:9:T.W:'really'
+      live.md:6:25:T.Passive:passive 'was written'
+
   - name: file fields
     about: "`.Name`, and `.Path` relative to the .vale.ini"
     files:
