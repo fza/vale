@@ -119,7 +119,7 @@ func anchorLabel(anchor, sec string) string {
 // would follow the order the paths were discovered in.
 func loadNested(cfg *Config, nested []nestedConfig, dry bool) error {
 	for _, n := range nested {
-		uCfg, err := shadowLoad(n.path)
+		uCfg, err := shadowLoad(cfg.FS, n.path)
 		if err != nil {
 			return err
 		}
