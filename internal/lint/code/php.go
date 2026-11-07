@@ -13,6 +13,7 @@ func PHP() *Language {
 		Prefix:  cStylePrefix,
 		Parser:  php.GetLanguage(),
 		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Doc:     PHPDoc,
 		Padding: func(s string) int {
 			return computePadding(s, []string{"//", "/*", "#"})
 		},

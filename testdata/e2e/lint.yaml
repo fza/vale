@@ -2497,3 +2497,54 @@ cases:
     exit: 1
     want: |
       page.qdoc:5:40:Vale.Spelling:Did you really mean 'recrod'?
+
+  - name: php-doc-tags
+    about: |
+      A PHPDoc block's tag syntax is code that PHPStan, IDEs, Doctrine and Flow
+      read: the tag, its type, the variable it names and an annotation's
+      arguments are masked from every rule, and the description after them is
+      prose.
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*]
+        BasedOnStyles = Vale, T
+        Vale.Terms = NO
+        Vale.Avoid = NO
+        Vale.Repetition = NO
+      styles/T/Caps.yml: |
+        extends: existence
+        message: "'%s' is an acronym"
+        level: error
+        tokens:
+          - ORM
+          - EAGER
+          - DESC
+      Order.php: |
+        <?php
+        class Order {
+        	/**
+        	 * The customr of this order.
+        	 * @ORM\ManyToOne(fetch="EAGER")
+        	 * @ORM\OrderBy({"x" = "DESC"})
+        	 */
+        	protected $customer;
+
+        	/**
+        	 * Sends the mail.
+        	 * @param string $methodName the methd to call
+        	 * @Flow\Validate(argumentName="scheduleDate",
+        	 *     type="NotEmpty")
+        	 */
+        	public function send($methodName) {
+        		/** @var array<TokenInterface> $authenticatedTokens */
+        		$authenticatedTokens = [];
+        	}
+        }
+    args: Order.php
+    exit: 1
+    want: |
+      Order.php:4:9:Vale.Spelling:Did you really mean 'customr'?
+      Order.php:12:35:Vale.Spelling:Did you really mean 'methd'?
