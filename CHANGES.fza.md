@@ -390,6 +390,43 @@ resolved, which is how such a file reaches its grammar.
 - `internal/lint/code/mk.go`, `internal/lint/code/lang.go`.
 - `internal/core/format_test.go` — `TestFormatFromExtNamesABuildFile`; `testdata/e2e/lint.yaml` case `build-file-comments`.
 
+### A PHPDoc block's tag syntax reads as code
+
+Upstream masks the tags of Javadoc, JSDoc, KDoc, Python docstrings, Go and
+rustdoc, and nothing in PHP, so `@param string $methodName` reported the
+variable as a misspelling and `@ORM\ManyToOne(fetch="EAGER")` reported two
+acronyms. The syntax cannot be rewritten to suit a prose rule: PHPStan, Psalm,
+IDEs, Doctrine and Flow all parse it, and backticks around `$name` unbind a tag
+from its parameter. `TokenIgnores` does not reach it either, since it works
+only where the file maps to a markup format.
+
+The tag syntax is masked for every rule, and the description after it stays
+prose:
+
+- a block tag with what it carries: a type and a variable (`@param`, `@var`,
+  `@property`), a type (`@return`, `@throws`, `@extends`), a reference (`@see`,
+  `@link`, `@covers`), a version where one follows (`@since`, `@deprecated`), a
+  template and its bound, a method signature; the `@phpstan-`, `@psalm-` and
+  `@phan-` variants alike;
+- a type in full, nested or not: generics, array shapes, callables with their
+  return type, unions, intersections, nullable, grouped, literal and constant
+  types, `[]`;
+- an annotation call with its arguments, across lines and nested:
+  `@ORM\JoinTable(joinColumns={@ORM\JoinColumn(name="a_id")})`;
+- an inline tag, `{@see Reader::read()}`;
+- a variable wherever a comment names it, `$controllerContext`; an amount such as
+  `$5` stays prose;
+- the whole line of a tag that holds no prose: `@author`, `@copyright`,
+  `@license`, `@package`, `@subpackage`, `@category`, `@example`, `@filesource`.
+
+A tag is read only at the start of a line, so an address such as
+`admin@example.com` stays prose. The syntax nests, which no regular expression
+follows, so the block is scanned by hand. Syntax left unclosed masks an
+annotation to the end of its line and a type to its last whole part.
+
+- `internal/lint/code/phpdoc.go` — `PHPDoc`, `phpTagShapes`, `scanPHPType`, `balancedEnd`; set as `Language.Doc` in `php.go`.
+- `internal/lint/code/phpdoc_internal_test.go`; `testdata/e2e/lint.yaml` case `php-doc-tags`.
+
 ## Performance
 
 These are the reason the fork exists for its consumer. A merge that keeps the
