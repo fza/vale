@@ -5,7 +5,7 @@ catalogue of it: what each addition does, why it exists, the surface it exposes,
 and the tests that hold it. Nothing here is upstream's, so a merge that drops any
 of it is a silent regression rather than a conflict.
 
-The fork sits on upstream `v3.25.1`. Each change is a branch of its own merged
+The fork sits on upstream `v3.26.0`. Each change is a branch of its own merged
 into `fza` (see "Branches"), so the changes are listed one merge per line with:
 
 ```bash
@@ -53,7 +53,7 @@ a line the directive suppressed, is blank rather than absent — so an alert sti
 maps back onto the source through the comment's strip table. The toggle state
 reaches the file, so a directive carries into later comments.
 
-- `internal/lint/code.go` — `eachDirectiveRun`, wrapping the call to `lintComment` in `lintCode`, which takes each run's text rather than the comment's own. A comment converted as part of a reStructuredText batch is linted from the batch only while the run is the whole comment.
+- `internal/lint/code_ts.go` — `eachDirectiveRun`, wrapping the call to `lintComment` in `lintCode`, which takes each run's text rather than the comment's own. A comment converted as part of a reStructuredText batch is linted from the batch only while the run is the whole comment.
 - `internal/core/file.go` — `IsCommentControl`.
 - `internal/lint/code_test.go`.
 
@@ -128,7 +128,8 @@ Accepted cost: a consumer's alerts move. One that matched across a mask
 disappears, and one that a phrase exemption suppressed by matching across a
 mask appears, as it already did for the same line in Markdown.
 
-- `internal/lint/code.go` -- `maskKeepingLines` under `maskCode`, `mask` under `maskDocOpener`, `maskURLs`.
+- `internal/lint/code_ts.go` -- `maskKeepingLines` under `maskCode`, `mask` under `maskDocOpener`.
+- `internal/lint/code.go` -- `maskURLs`.
 - `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone.
 - `internal/lint/code_test.go` -- `TestMaskCode`, `TestMaskURLs`; `internal/lint/docopener_test.go`.
 - `testdata/e2e/lint.yaml` -- cases `code-span-placeholder` (Go, C, C++, Rust, Python, with Markdown as the control), `url-placeholder` (Go, C, Python, and Clojure through the regex fallback) and `doc-opener-placeholder`.
@@ -174,7 +175,7 @@ onto the source; "Masked comment text is a run no rule crosses" says why `*`. A
 fence is masked first, so the backticks opening and closing it cannot pair with
 the ones a span inside it carries.
 
-- `internal/lint/code.go` — `maskCode`, `fencedCode`, `inlineCode`, `maskKeepingLines`.
+- `internal/lint/code_ts.go` — `maskCode`, `fencedCode`, `inlineCode`, `maskKeepingLines`.
 - `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`.
 
 ### A doc comment's opening run reads as code
@@ -201,7 +202,7 @@ declared name itself (`DocName`, `leadingMask`); the fork's mask goes further,
 to every name in a slash-separated run and to the name after `Package`, and the
 two agree wherever both apply.
 
-- `internal/lint/code.go` — `maskDocOpener`, `docOpener`, `packageOpener`, `runNames`, `declares`, `declarationBlock`, `namedInAny`, `namedIn`, `commentEnd`, `mask`, `blockSlack`; the call gated on `lang.OpensWithName`.
+- `internal/lint/code_ts.go` — `maskDocOpener`, `docOpener`, `packageOpener`, `runNames`, `declares`, `declarationBlock`, `namedInAny`, `namedIn`, `commentEnd`, `mask`, `blockSlack`; the call gated on `lang.OpensWithName`.
 - `internal/lint/code/lang.go` — `Language.OpensWithName`, set in `go.go`, `c.go`, `cpp.go` and `rs.go`.
 - `internal/lint/docopener_test.go`; `testdata/e2e/lint.yaml` cases `doc-opener-by-language` and `doc-opener-placeholder`.
 
@@ -222,12 +223,15 @@ no way to tell them from the help text beside them. The opening quote is
 recorded as the first line's strip, the way a comment's opening delimiter is,
 so a raw string's later lines map back through the dedent alone.
 
-- `internal/lint/code/comments.go` — `LiteralScope`, `IsLiteral`, `WithLiterals`, `splitLiterals`.
+- `internal/core/scopes.go` — `LiteralScope`, `IsLiteral`, outside `internal/lint/code` because that
+  package needs CGo and the browser build reads them too.
+- `internal/lint/code/comments.go` — `WithLiterals`, `splitLiterals`.
 - `internal/lint/code/lang.go` — `Language.Literals`, `Language.SkipLiteral`.
 - `internal/lint/code/go.go` — the literal queries and `goStructuralLiteral`.
 - `internal/lint/code/query.go` — the `literal` capture, `trimQuotes`, the family in the scope name, the quote as the first line's `opener`.
 - `internal/lint/code/comments.go` — literals kept apart from `coalesce`, `dropDirectives` and the documentation masks, and put back in source order.
-- `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`, `code.WithLiterals` gated on `Manager.HasScope`.
+- `internal/lint/code.go` — `blockScope`, the `literal` exemption in `skipsComment`.
+- `internal/lint/code_ts.go` — `code.WithLiterals` gated on `Manager.HasScope`.
 - `internal/lint/fragment.go` — a literal skipped on the markup path, which would rebuild it under `text`.
 - `internal/lint/code/literal_test.go`; `testdata/e2e/scopes.yaml` cases `literal` and `literal-unasked`, with fixtures under `testdata/fixtures/scopes/`.
 
@@ -652,7 +656,7 @@ before. Neither is a fork feature, and neither is a fault in the prose:
 - The rewritten spelling engine does not accept an acronym's plural -- `POSTs`
   -- on its own. A vocabulary that wants one lists it.
 
-Upstream v3.23.0 to v3.25.1 move alerts a consumer compares line by line. None
+Upstream v3.23.0 to v3.26.0 move alerts a consumer compares line by line. None
 is a fork feature:
 
 - A space in an `existence` token or a `substitution` key matches a line break,
@@ -667,6 +671,8 @@ is a fork feature:
   vocabulary it reported before.
 - A document that cannot be read or parsed is reported after the rest, and the
   run goes on.
+- An image's alt text inside an element whose class `IgnoredClasses` names is
+  ignored with the element, so an alert reported there before is gone.
 
 ## Releases
 
