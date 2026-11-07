@@ -49,7 +49,7 @@ var readabilityMetrics = []string{
 	"Automated Readability",
 }
 
-func wasIndicator(indicators []string) strcase.IndicatorFunc {
+func wasIndicator(indicators []string) indicatorFunc {
 	return func(word string, idx int) bool {
 		if core.HasAnySuffix(word, indicators) {
 			return true
@@ -118,7 +118,7 @@ func title(s string, except *rx.Regexp, tc *strcase.TitleConverter, threshold fl
 	return expected, (count / words) >= threshold
 }
 
-func sentence(s string, except *rx.Regexp, sc *strcase.SentenceConverter, threshold float64) (string, bool) {
+func sentence(s string, except *rx.Regexp, sc *sentenceConverter, threshold float64) (string, bool) {
 	count := 0.0
 	words := 0.0
 
