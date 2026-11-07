@@ -414,6 +414,15 @@ prose:
   `@link`, `@covers`), a version where one follows (`@since`, `@deprecated`), a
   template and its bound, a method signature; the `@phpstan-`, `@psalm-` and
   `@phan-` variants alike;
+- the analysers' own tags: a type alias (`@phpstan-type`, `@psalm-type`), an
+  imported one, `@psalm-suppress` with its issue names, `@phpstan-ignore` with
+  its identifiers while the reason in parentheses stays prose, and the
+  `@template-extends`, `@require-extends`, `@self-out` family;
+- PHPUnit's annotations: `@dataProvider`, `@depends`, `@group`, `@ticket`,
+  `@requires`, `@expectedException` and kin, and `@testWith` with each data row
+  on the lines after it; `@testdox` carries a sentence and stays prose;
+- an `@example` location with the line numbers after it, its description
+  prose;
 - a type in full, nested or not: generics, array shapes, callables with their
   return type, unions, intersections, nullable, grouped, literal and constant
   types, `[]`;
@@ -423,14 +432,18 @@ prose:
 - a variable wherever a comment names it, `$controllerContext`; an amount such as
   `$5` stays prose;
 - the whole line of a tag that holds no prose: `@author`, `@copyright`,
-  `@license`, `@package`, `@subpackage`, `@category`, `@example`, `@filesource`.
+  `@license`, `@package`, `@subpackage`, `@category`, `@filesource`.
 
-A tag is read only at the start of a line, so an address such as
-`admin@example.com` stays prose. The syntax nests, which no regular expression
-follows, so the block is scanned by hand. Syntax left unclosed masks an
-annotation to the end of its line and a type to its last whole part.
+A tag is read only at the start of a line, as PHPDoc itself reads one, so an
+address such as `admin@example.com` and a tag named inside a sentence stay
+prose. The syntax nests, which no regular expression follows, so the block is
+scanned by hand. Inside an annotation's arguments `<` and `>` compare values and
+pair with nothing, so `@Assert\Expression(value > 3, ...)` is masked across its
+lines. Syntax left unclosed masks an annotation to the end of its line; a broken
+type is masked through the variable after it on its line, or, with no variable,
+to its last whole part.
 
-- `internal/lint/code/phpdoc.go` — `PHPDoc`, `phpTagShapes`, `scanPHPType`, `balancedEnd`; set as `Language.Doc` in `php.go`.
+- `internal/lint/code/phpdoc.go` — `PHPDoc`, `phpTagShapes`, `phpToolTagShapes`, `scanPHPType`, `scanPHPTypeAndVar`, `phpRowsEnd`, `balancedEnd`; set as `Language.Doc` in `php.go`.
 - `internal/lint/code/phpdoc_internal_test.go`; `testdata/e2e/lint.yaml` case `php-doc-tags`.
 
 ## Performance
