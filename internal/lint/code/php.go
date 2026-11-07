@@ -36,6 +36,7 @@ func PHP() *Language {
 			"escape_sequence": true,
 			"nowdoc_string":   true,
 		},
+		Doc: PHPDoc,
 		Padding: func(s string) int {
 			return computePadding(s, []string{"//", "/*", "#"})
 		},
