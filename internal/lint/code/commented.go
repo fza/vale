@@ -125,8 +125,8 @@ var codeTails = []string{"", "\n}", "\n  pass", "\nend"}
 // codeHead opens the block a line closes, so that `} else {` reads alone.
 const codeHead = "if (x) {\n"
 
-// CodeRun is a run of commented-out code in a comment's text.
-type CodeRun struct {
+// CommentedRun is a run of commented-out code in a comment's text.
+type CommentedRun struct {
 	First, Last int    // the run's first and last line, 1-based
 	Column      int    // where the first line's code starts, 1-based, in runes
 	Text        string // the first line's code
@@ -141,7 +141,7 @@ type CodeRun struct {
 // A Live comment is code the build reads, not code taken out of it: it is
 // blanked whole and forms no run. Code in a documentation comment is an
 // example: it is blanked and forms no run either.
-func (lang *Language) HideCode(c Comment) (Comment, []CodeRun) {
+func (lang *Language) HideCode(c Comment) (Comment, []CommentedRun) {
 	if c.grammar != nil {
 		lang = c.grammar
 	}
@@ -156,8 +156,8 @@ func (lang *Language) HideCode(c Comment) (Comment, []CodeRun) {
 	}
 
 	var (
-		runs    []CodeRun
-		run     *CodeRun
+		runs    []CommentedRun
+		run     *CommentedRun
 		pending []int
 	)
 
@@ -166,7 +166,7 @@ func (lang *Language) HideCode(c Comment) (Comment, []CodeRun) {
 		case isCode && run == nil:
 			trimmed := strings.TrimLeftFunc(lines[i], unicode.IsSpace)
 			lead := utf8.RuneCountInString(lines[i][:len(lines[i])-len(trimmed)])
-			run = &CodeRun{First: i + 1, Column: lead + 1, Text: strings.TrimSpace(trimmed)}
+			run = &CommentedRun{First: i + 1, Column: lead + 1, Text: strings.TrimSpace(trimmed)}
 		case isCode:
 			for _, p := range pending {
 				blank(p)
@@ -212,7 +212,7 @@ func (c Comment) documents() bool {
 
 // closeRun ends a run with the lines without a word that follow it, up to
 // the first empty one: the `}` that closes the block a run opened.
-func closeRun(run *CodeRun, pending []int, lines []string, blank func(int)) {
+func closeRun(run *CommentedRun, pending []int, lines []string, blank func(int)) {
 	for _, p := range pending {
 		if strings.TrimSpace(lines[p]) == "" {
 			return

@@ -220,7 +220,7 @@ func TestHideCode(t *testing.T) {
 		source string
 		doc    string
 		want   string
-		runs   []CodeRun
+		runs   []CommentedRun
 	}{
 		{
 			name: "example in a comment documenting a declaration",
@@ -239,7 +239,7 @@ func TestHideCode(t *testing.T) {
 			text:   "$x = run($y);",
 			source: "/*\n $x = run($y);\n*/",
 			want:   strings.Repeat(" ", len("$x = run($y);")),
-			runs:   []CodeRun{{First: 1, Last: 1, Column: 1, Text: "$x = run($y);"}},
+			runs:   []CommentedRun{{First: 1, Last: 1, Column: 1, Text: "$x = run($y);"}},
 		},
 		{
 			name: "prose only",
@@ -250,31 +250,31 @@ func TestHideCode(t *testing.T) {
 			name: "one line among prose",
 			text: "Was:\n  $x = run($y);\nNow gone.",
 			want: "Was:\n" + strings.Repeat(" ", len("  $x = run($y);")) + "\nNow gone.",
-			runs: []CodeRun{{First: 2, Last: 2, Column: 3, Text: "$x = run($y);"}},
+			runs: []CommentedRun{{First: 2, Last: 2, Column: 3, Text: "$x = run($y);"}},
 		},
 		{
 			name: "empty line bridges, closing brace joins",
 			text: "if ($ready) {\n\n    run($x);\n}\nThen prose.",
 			want: "             \n\n            \n \nThen prose.",
-			runs: []CodeRun{{First: 1, Last: 4, Column: 1, Text: "if ($ready) {"}},
+			runs: []CommentedRun{{First: 1, Last: 4, Column: 1, Text: "if ($ready) {"}},
 		},
 		{
 			name: "line without a word bridges",
 			text: "run($x);\n  );\nrun($y);",
 			want: "        \n    \n        ",
-			runs: []CodeRun{{First: 1, Last: 3, Column: 1, Text: "run($x);"}},
+			runs: []CommentedRun{{First: 1, Last: 3, Column: 1, Text: "run($x);"}},
 		},
 		{
 			name: "trailing empty line stays",
 			text: "run($x);\n\nprose here",
 			want: "        \n\nprose here",
-			runs: []CodeRun{{First: 1, Last: 1, Column: 1, Text: "run($x);"}},
+			runs: []CommentedRun{{First: 1, Last: 1, Column: 1, Text: "run($x);"}},
 		},
 		{
 			name: "prose splits runs",
 			text: "run($x);\nthen prose\nrun($y);",
 			want: "        \nthen prose\n        ",
-			runs: []CodeRun{
+			runs: []CommentedRun{
 				{First: 1, Last: 1, Column: 1, Text: "run($x);"},
 				{First: 3, Last: 3, Column: 1, Text: "run($y);"},
 			},
@@ -283,7 +283,7 @@ func TestHideCode(t *testing.T) {
 			name: "column counts runes",
 			text: "  $x = 1;",
 			want: strings.Repeat(" ", len("  $x = 1;")),
-			runs: []CodeRun{{First: 1, Last: 1, Column: 3, Text: "$x = 1;"}},
+			runs: []CommentedRun{{First: 1, Last: 1, Column: 3, Text: "$x = 1;"}},
 		},
 	}
 	for _, c := range cases {

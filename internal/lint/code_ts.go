@@ -188,7 +188,7 @@ const commentedCheck = "Vale.CommentedCode"
 // hideCode blanks the commented-out code in text, the comment's text or a
 // run of it, unless f has it linted as prose, and returns the runs of it. A
 // string literal is code already.
-func hideCode(f *core.File, lang *code.Language, comment code.Comment, text string) (string, []code.CodeRun) {
+func hideCode(f *core.File, lang *code.Language, comment code.Comment, text string) (string, []code.CommentedRun) {
 	if f.Commented == core.CommentedLint || core.IsLiteral(comment.Scope) {
 		return text, nil
 	}
@@ -200,7 +200,7 @@ func hideCode(f *core.File, lang *code.Language, comment code.Comment, text stri
 // flagCode reports each run of commented-out code, when f has it flagged.
 // The alerts are placed within the comment's text, as the comment's own
 // alerts are until adjustAlerts moves them.
-func (l *Linter) flagCode(f *core.File, runs []code.CodeRun) {
+func (l *Linter) flagCode(f *core.File, runs []code.CommentedRun) {
 	if f.Commented != core.CommentedFlag {
 		return
 	}
