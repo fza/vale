@@ -21,14 +21,14 @@ files:
             $x = 1; // blorp is the counter here
             /*
              * The blorp check is gone for now:
-             * $this->assertSame(1, $blorp);
+             * $this->assertSame(1, blorp());
              * }
              */
-            // if ($blorp) {
+            // if (blorp()) {
             //
-            //     run($blorp);
+            //     run(blorp());
             // } else {
-            //     stop($blorp);
+            //     stop(blorp());
             // }
             // Then blorp again.
         }
@@ -79,10 +79,10 @@ cases:
       PolicyTest.php:7:49:T.Blorp:found 'blorp'
       PolicyTest.php:8:20:T.Blorp:found 'blorp'
       PolicyTest.php:10:16:T.Blorp:found 'blorp'
-      PolicyTest.php:11:34:T.Blorp:found 'blorp'
-      PolicyTest.php:14:17:T.Blorp:found 'blorp'
-      PolicyTest.php:16:21:T.Blorp:found 'blorp'
-      PolicyTest.php:18:22:T.Blorp:found 'blorp'
+      PolicyTest.php:11:33:T.Blorp:found 'blorp'
+      PolicyTest.php:14:16:T.Blorp:found 'blorp'
+      PolicyTest.php:16:20:T.Blorp:found 'blorp'
+      PolicyTest.php:18:21:T.Blorp:found 'blorp'
       PolicyTest.php:20:17:T.Blorp:found 'blorp'
 
   - name: lint
@@ -100,10 +100,10 @@ cases:
       PolicyTest.php:7:49:T.Blorp:found 'blorp'
       PolicyTest.php:8:20:T.Blorp:found 'blorp'
       PolicyTest.php:10:16:T.Blorp:found 'blorp'
-      PolicyTest.php:11:34:T.Blorp:found 'blorp'
-      PolicyTest.php:14:17:T.Blorp:found 'blorp'
-      PolicyTest.php:16:21:T.Blorp:found 'blorp'
-      PolicyTest.php:18:22:T.Blorp:found 'blorp'
+      PolicyTest.php:11:33:T.Blorp:found 'blorp'
+      PolicyTest.php:14:16:T.Blorp:found 'blorp'
+      PolicyTest.php:16:20:T.Blorp:found 'blorp'
+      PolicyTest.php:18:21:T.Blorp:found 'blorp'
       PolicyTest.php:20:17:T.Blorp:found 'blorp'
 
   - name: mask
