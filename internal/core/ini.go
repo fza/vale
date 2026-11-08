@@ -350,6 +350,18 @@ var syntaxOpts = map[string]func(string, *ini.Section, *Config) error{
 		cfg.FormatToLang[label] = sec.Key("Lang").String()
 		return nil
 	},
+	"CommentedCode": func(label string, sec *ini.Section, cfg *Config) error {
+		mode := sec.Key("CommentedCode").String()
+		if !StringInSlice(mode, []string{CommentedLint, CommentedMask, CommentedFlag}) {
+			return NewE201FromTarget(
+				fmt.Sprintf("CommentedCode must be %s, %s or %s, but got '%s'",
+					CommentedLint, CommentedMask, CommentedFlag, mode),
+				"CommentedCode",
+				cfg.RootINI)
+		}
+		cfg.CommentedCode[label] = mode
+		return nil
+	},
 	"View": func(label string, sec *ini.Section, cfg *Config) error {
 		name := sec.Key("View").String()
 

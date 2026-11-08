@@ -34,6 +34,8 @@ type Comment struct {
 	// Masks are the ranges of Text that hold no prose; an alert whose match
 	// lies inside one is dropped. See doc.go.
 	Masks []Mask `json:"-"`
+	// Live marks a comment the build reads as code. See Language.LiveCode.
+	Live bool `json:"-"`
 }
 
 // StripAt returns what came off the front of a line, 1-based as alerts are.
@@ -146,6 +148,7 @@ func coalesce(comments []Comment) []Comment {
 			if comment.Doc != "" {
 				joined[len(joined)-1].Doc = comment.Doc
 			}
+			joined[len(joined)-1].Live = comment.Live
 		}
 	}
 

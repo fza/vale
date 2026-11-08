@@ -1,0 +1,329 @@
+# CommentedCode: comment lines a file's grammar reads as code are linted as
+# prose (lint, the default), kept from every rule (mask), or kept from every
+# rule and reported (flag).
+name: commented-code
+
+files:
+  styles/T/Blorp.yml: |
+    extends: existence
+    message: "found '%s'"
+    level: error
+    tokens:
+      - blorp
+  PolicyTest.php: |
+    <?php
+
+    class PolicyTest
+    {
+        public function testIt(): void
+        {
+            // $this->assertTrue($result, 'Section "blorp" changed');
+            $x = 1; // blorp is the counter here
+            /*
+             * The blorp check is gone for now:
+             * $this->assertSame(1, $blorp);
+             * }
+             */
+            // if ($blorp) {
+            //
+            //     run($blorp);
+            // } else {
+            //     stop($blorp);
+            // }
+            // Then blorp again.
+        }
+    }
+  main.go: |
+    package main
+
+    // #include "blorp.h"
+    // int blorp_size();
+    import "C"
+
+    // Run starts the blorp.
+    //
+    //	x := blorp(1)
+    //	fmt.Println(x)
+    func Run() {}
+  on.go: |
+    package main
+
+    func On() {
+    	// Keep it.
+    	// x := run(1)
+    }
+  off.go: |
+    package main
+
+    func Off() {
+    	// <!-- vale off -->
+    	// x := run(1)
+    }
+  conf.py: |
+    # The blorp settings.
+    #blorp_theme = 'alabaster'
+    # html_blorp = {'type': 'default'}
+
+cases:
+  - name: lint-by-default
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:7:49:T.Blorp:found 'blorp'
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:11:34:T.Blorp:found 'blorp'
+      PolicyTest.php:14:17:T.Blorp:found 'blorp'
+      PolicyTest.php:16:21:T.Blorp:found 'blorp'
+      PolicyTest.php:18:22:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: lint
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = lint
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:7:49:T.Blorp:found 'blorp'
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:11:34:T.Blorp:found 'blorp'
+      PolicyTest.php:14:17:T.Blorp:found 'blorp'
+      PolicyTest.php:16:21:T.Blorp:found 'blorp'
+      PolicyTest.php:18:22:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: mask
+    about: the code lines reach no rule; the prose lines around them still do
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = mask
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: flag
+    about: one alert per run; an empty line inside a run and a closing brace after it join it
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:7:12:Vale.CommentedCode:Commented-out code.
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:11:12:Vale.CommentedCode:Commented-out code, 2 lines.
+      PolicyTest.php:14:12:Vale.CommentedCode:Commented-out code, 6 lines.
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: later-section-wins
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = flag
+
+        [Policy*.php]
+        CommentedCode = mask
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: flag-below-min-level
+    about: the alert is a warning, which MinAlertLevel = error hides
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = error
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: flag-level-raised
+    about: a section sets the alert's level as it does a rule's
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = error
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = flag
+        Vale.CommentedCode = error
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:7:12:Vale.CommentedCode:Commented-out code.
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:11:12:Vale.CommentedCode:Commented-out code, 2 lines.
+      PolicyTest.php:14:12:Vale.CommentedCode:Commented-out code, 6 lines.
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: flag-switched-off
+    about: switching the alert off leaves the code masked
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = flag
+        Vale.CommentedCode = NO
+    args: PolicyTest.php
+    exit: 1
+    want: |
+      PolicyTest.php:8:20:T.Blorp:found 'blorp'
+      PolicyTest.php:10:16:T.Blorp:found 'blorp'
+      PolicyTest.php:20:17:T.Blorp:found 'blorp'
+
+  - name: unknown-value
+    files:
+      .vale.ini: |
+        StylesPath = styles
+
+        [*.php]
+        BasedOnStyles = T
+        CommentedCode = hide
+    args: PolicyTest.php
+    exit: 2
+    contains: "CommentedCode must be lint, mask or flag, but got 'hide'"
+
+  - name: global-key
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        CommentedCode = flag
+
+        [*.php]
+        BasedOnStyles = T
+    args: PolicyTest.php
+    exit: 2
+    contains: "'CommentedCode' is a syntax-specific option"
+
+  - name: go-fragments
+    about: >-
+      a doc comment read as Markdown; its indented example is code either way,
+      and the cgo preamble is code the build reads, masked and never flagged
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [formats]
+        go = md
+
+        [*.go]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: main.go
+    exit: 1
+    want: |
+      main.go:7:19:T.Blorp:found 'blorp'
+
+  - name: go-fragments-flag
+    about: a comment read as Markdown flags its code, unless `vale off` comes first
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [formats]
+        go = md
+
+        [*.go]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: on.go off.go
+    exit: 0
+    want: |
+      on.go:5:5:Vale.CommentedCode:Commented-out code.
+
+  - name: go-flag
+    about: >-
+      the example in a doc comment and the cgo preamble are masked, and
+      neither is commented-out code
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.go]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: main.go
+    exit: 1
+    want: |
+      main.go:7:19:T.Blorp:found 'blorp'
+
+  - name: go-preamble-linted
+    about: under lint the preamble is read as prose, as every comment is
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.go]
+        BasedOnStyles = T
+    args: main.go
+    exit: 1
+    want: |
+      main.go:3:14:T.Blorp:found 'blorp'
+      main.go:7:19:T.Blorp:found 'blorp'
+      main.go:9:9:T.Blorp:found 'blorp'
+
+  - name: python
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.py]
+        BasedOnStyles = T
+        CommentedCode = flag
+    args: conf.py
+    exit: 1
+    want: |
+      conf.py:1:7:T.Blorp:found 'blorp'
+      conf.py:2:2:Vale.CommentedCode:Commented-out code, 2 lines.

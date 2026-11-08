@@ -9,9 +9,10 @@ import (
 
 func Protobuf() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`//|/\*|\*/`),
-		Parser:  protobuf.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding: cStyle,
+		Delims:     regexp.MustCompile(`//|/\*|\*/`),
+		Parser:     protobuf.GetLanguage(),
+		CodeFrames: [][2]string{{"", ""}, {"syntax = \"proto3\";\nmessage M {\n", "\n}"}},
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Padding:    cStyle,
 	}
 }

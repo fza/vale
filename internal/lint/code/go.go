@@ -9,14 +9,16 @@ import (
 
 func Go() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`//|/\*|\*/`),
-		Parser:  golang.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding: cStyle,
+		Delims:     regexp.MustCompile(`//|/\*|\*/`),
+		Parser:     golang.GetLanguage(),
+		CodeFrames: [][2]string{{"package p\n", ""}, {"package p\nfunc _() {\n", "\n}"}},
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Padding:    cStyle,
 		// A doc comment opens with the name it documents and links to
 		// others in brackets; a `//go:` line is a directive.
 		Directive: goDirective,
 		Doc:       GoDoc,
 		DocName:   goDocName,
+		LiveCode:  cgoPreamble,
 	}
 }

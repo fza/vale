@@ -11,9 +11,10 @@ import (
 // KDoc (`/** */`), which the grammar parses as an ordinary block comment.
 func Kotlin() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`//|/\*\*?|\*/`),
-		Prefix: cStylePrefix,
-		Parser: kotlin.GetLanguage(),
+		Delims:     regexp.MustCompile(`//|/\*\*?|\*/`),
+		Prefix:     cStylePrefix,
+		Parser:     kotlin.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: "(line_comment)+ @comment", Type: ""},
 			{Name: "", Expr: "(multiline_comment) @comment", Type: ""},

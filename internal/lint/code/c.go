@@ -9,9 +9,10 @@ import (
 
 func C() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`//|/\*|\*/`),
-		Prefix: cStylePrefix,
-		Parser: c.GetLanguage(),
+		Delims:     regexp.MustCompile(`//|/\*|\*/`),
+		Prefix:     cStylePrefix,
+		Parser:     c.GetLanguage(),
+		CodeFrames: [][2]string{{"", ""}, {"void _() {\n", "\n}"}},
 		Queries: []core.Scope{
 			{Name: "", Expr: "(comment) @comment", Type: ""},
 		},

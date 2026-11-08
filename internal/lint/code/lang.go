@@ -34,6 +34,18 @@ type Language struct {
 	Queries []core.Scope
 	Cutset  string
 	Padding padding
+	// CodeFrames are the code a commented-out line is wrapped in before the
+	// grammar reads it, tried in order: a PHP line needs its `<?php` opener,
+	// a Go or Java statement a function around it. Nil reads the line alone.
+	CodeFrames [][2]string
+	// CodeSignal, set for a grammar that reads an ordinary sentence as code,
+	// is what a commented-out line has to hold besides parsing. See
+	// commented.go.
+	CodeSignal *regexp.Regexp
+	// CodeUnparsed marks a language read with another language's grammar, as
+	// R is with Bash's: its CodeSignal alone decides what is code.
+	CodeUnparsed bool
+
 	// Directive matches a comment addressed to a tool -- a build constraint,
 	// a linter suppression -- which is dropped rather than read. It is
 	// matched against the comment as written, delimiter included.
@@ -45,6 +57,9 @@ type Language struct {
 	// read from the node it precedes; nil for a language with no such
 	// convention.
 	DocName func(*sitter.Node, []byte) string
+	// LiveCode reports whether a comment holds code the build reads, by the
+	// language's own convention: Go's cgo preamble, the C above `import "C"`.
+	LiveCode func(*sitter.Node, []byte) bool
 }
 
 // GetLanguageFromExt returns a Language based on the given file extension.

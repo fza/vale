@@ -9,11 +9,12 @@ import (
 
 func Cpp() *Language {
 	return &Language{
-		Delims:    regexp.MustCompile(`//|/\*!?|\*/`),
-		Prefix:    cStylePrefix,
-		Parser:    cpp.GetLanguage(),
-		Queries:   []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Padding:   cStyle,
-		Directive: cDirective,
+		Delims:     regexp.MustCompile(`//|/\*!?|\*/`),
+		Prefix:     cStylePrefix,
+		Parser:     cpp.GetLanguage(),
+		CodeFrames: [][2]string{{"", ""}, {"void _() {\n", "\n}"}},
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Padding:    cStyle,
+		Directive:  cDirective,
 	}
 }

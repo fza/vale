@@ -65,6 +65,7 @@ func (l *Linter) lintFragments(f *core.File) error {
 	}
 
 	wholeFile := f.Content
+	runs := hideCode(f, lang, comments)
 	converted := l.rstBatch(f, comments, strings.TrimPrefix(f.NormedExt, "."))
 
 	last := 0
@@ -89,6 +90,7 @@ func (l *Linter) lintFragments(f *core.File) error {
 		if err != nil {
 			return err
 		}
+		l.flagCode(f, runs, i)
 		f.Alerts = dropMasked(f.Alerts, last, comment)
 
 		size := len(f.Alerts)

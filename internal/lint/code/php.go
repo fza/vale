@@ -9,10 +9,11 @@ import (
 
 func PHP() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`//|/\*\*?|\*/|#`),
-		Prefix:  cStylePrefix,
-		Parser:  php.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Delims:     regexp.MustCompile(`//|/\*\*?|\*/|#`),
+		Prefix:     cStylePrefix,
+		Parser:     php.GetLanguage(),
+		CodeFrames: [][2]string{{"<?php\n", ""}},
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
 		Padding: func(s string) int {
 			return computePadding(s, []string{"//", "/*", "#"})
 		},

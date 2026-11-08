@@ -9,9 +9,10 @@ import (
 
 func Ruby() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`#|=begin|=end`),
-		Parser:  ruby.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Delims:     regexp.MustCompile(`#|=begin|=end`),
+		Parser:     ruby.GetLanguage(),
+		CodeSignal: codeSignal,
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
 		Padding: func(s string) int {
 			return computePadding(s, []string{"#", `=begin`, `=end`})
 		},

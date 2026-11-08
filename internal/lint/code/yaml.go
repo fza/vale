@@ -9,9 +9,10 @@ import (
 
 func YAML() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`#`),
-		Parser:  yaml.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Delims:     regexp.MustCompile(`#`),
+		Parser:     yaml.GetLanguage(),
+		CodeSignal: yamlCodeSignal,
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
 		Padding: func(s string) int {
 			return computePadding(s, []string{"#"})
 		},

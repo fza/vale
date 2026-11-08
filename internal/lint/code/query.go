@@ -174,6 +174,7 @@ func (qe *QueryEngine) run(meta, format string, q *sitter.Query, source []byte) 
 				Strip:  strip,
 				Format: format,
 				Doc:    doc,
+				Live:   qe.lang.LiveCode != nil && qe.lang.LiveCode(c.Node, source),
 			})
 		}
 	}

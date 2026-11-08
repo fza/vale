@@ -168,6 +168,18 @@ type CLIFlags struct {
 	FS system.FS
 }
 
+// The values of a section's CommentedCode: what a comment line gets that the
+// file's grammar reads as code.
+const (
+	// CommentedLint lints it as prose, as every comment line was before.
+	CommentedLint = "lint"
+	// CommentedMask keeps it from every rule.
+	CommentedMask = "mask"
+	// CommentedFlag keeps it from every rule and reports each run of such
+	// lines as Vale.CommentedCode.
+	CommentedFlag = "flag"
+)
+
 // Config holds the configuration values from both the CLI and `.vale.ini`.
 type Config struct {
 	// General configuration
@@ -177,6 +189,7 @@ type Config struct {
 	Asciidoctor       map[string]string            // A map of asciidoctor attributes
 	Sphinx            map[string]string            // The `[sphinx]` section: a project's directives and roles
 	FormatToLang      map[string]string            // A map of format to lang ID
+	CommentedCode     map[string]string            // A section's CommentedCode mode: lint, mask or flag
 	GBaseStyles       []string                     // Global base style
 	GChecks           map[string]bool              // Global checks
 	IgnoredClasses    []string                     // A list of HTML classes to ignore
@@ -258,6 +271,7 @@ func NewConfig(flags *CLIFlags) (*Config, error) {
 	cfg.TokenIgnores = make(map[string][]string)
 	cfg.CommentDelimiters = make(map[string][2]string)
 	cfg.FormatToLang = make(map[string]string)
+	cfg.CommentedCode = make(map[string]string)
 	cfg.Views = make(map[string]*View)
 	cfg.Scopes = make(map[string]string)
 	cfg.Paths = []string{}
