@@ -582,7 +582,7 @@ Rejected:
 - Masking by default: a team that writes no commented-out code should see no
   change.
 
-- `internal/lint/code/commented.go` — `CodeLines`, `HideCode`, `CodeRun`, the gates, `cgoPreamble`; `Language.CodeFrames`, `CodeSignal`, `CodeUnparsed`, `LiveCode` and `Comment.Live` in `lang.go` and `comments.go`, set per language.
+- `internal/lint/code/commented.go` — `CodeLines`, `HideCode`, `CommentedRun`, the gates, `cgoPreamble`; `Language.CodeFrames`, `CodeSignal`, `CodeUnparsed`, `LiveCode` and `Comment.Live` in `lang.go` and `comments.go`, set per language.
 - `internal/core/config.go` — `CommentedLint`, `CommentedMask`, `CommentedFlag`, `Config.CommentedCode`; `internal/core/ini.go` — the `CommentedCode` key; `internal/core/file.go` — `File.Commented`.
 - `internal/lint/code_ts.go` — `hideCode`, `flagCode`, called from `lintCode` and `lintFragments`.
 - `internal/lint/code/commented_test.go`, `commented_fork_test.go` (shell, makefile, Svelte); `testdata/e2e/commented-code.yaml`.
