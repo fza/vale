@@ -2,7 +2,7 @@ version: 2
 
 # The fork's release, kept apart from upstream's `.goreleaser.yml` so that file
 # stays upstream's. A tag `v<upstream base>-fza.<N>` runs it through
-# `.github/workflows/release-fza.yml`; see CHANGES.fza.md, "Releases".
+# `.github/workflows/release-fza.yml`.
 project_name: vale
 
 env:
