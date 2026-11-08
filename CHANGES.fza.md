@@ -65,7 +65,22 @@ A fork build is tagged as a prerelease of its upstream base, `v3.25.1-fza.1`,
 and a semver constraint naming no prerelease excludes every prerelease, so
 `vale sync` refused a package asking for `>=3.0.0`. A version whose prerelease
 opens with `fza.` is measured by the release it carries; any other prerelease
-keeps upstream's reading.
+keeps upstream's reading. Only that check reads the release alone: `vale
+--version`, the `vale sync` refusal message, the tags and the cask keep
+`-fza.N`, so a fork build still names which fork release it is.
+
+Rejected:
+
+- Every constraint including prereleases (semver's `IncludePrerelease`, from
+  `Masterminds/semver` v3.4.0 on): it changes how upstream's own prereleases
+  are read, and `v3.25.1-fza.1` still fails `>=3.25.1`, since a prerelease sorts
+  below its release.
+- A fork tag that is no prerelease: every other form is rejected under the
+  release tag (GoReleaser refuses `v3.25.1.fza.1`; `+fza.N` makes every fork
+  release on one base compare equal).
+
+Accepted cost: a package demanding an upstream prerelease cannot tell a fork
+build from the plain release it carries.
 
 - `cmd/vale/pkgver.go` — `supportsVale`, `forkPrerelease`.
 - `cmd/vale/pkgver_test.go` — `TestSupportsValeOnAForkBuild`.
@@ -106,8 +121,7 @@ alert counts its columns in characters: a span holding `é` pushed every alert
 after it one column right per extra byte.
 
 The URL mask is upstream's own code, so its fix is a branch of its own cut from
-upstream, `fix/url-mask-placeholder`, and lifts out as an upstream pull request
-alone. The span mask and the opener mask are fixed on the branches that carry
+upstream, `fix/url-mask-placeholder`, and lifts out alone. The span mask and the opener mask are fixed on the branches that carry
 them.
 
 Rejected:
@@ -124,7 +138,7 @@ Rejected:
   `Package` were crossed the same way, and each left out would need a release
   of its own.
 - The URL fix on `feat/comment-code-mask`, beside the span mask it runs with:
-  that branch's pull request would then change upstream's URL handling as well.
+  that branch would then change upstream's URL handling as well.
 
 Accepted cost: a consumer's alerts move. One that matched across a mask
 disappears, and one that a phrase exemption suppressed by matching across a
@@ -132,7 +146,7 @@ mask appears, as it already did for the same line in Markdown.
 
 - `internal/lint/code_ts.go` -- `maskKeepingLines` under `maskCode`, `mask` under `maskDocOpener`.
 - `internal/lint/code.go` -- `maskURLs`.
-- `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone.
+- `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone. The package is internal, so no consumer imports it; a caller a later upstream release adds fails to compile at the rebase. Kept as an unused wrapper to spare that conflict: rejected, since code nobody calls is removed.
 - `internal/lint/code_test.go` -- `TestMaskCode`, `TestMaskURLs`; `internal/lint/docopener_test.go`.
 - `testdata/e2e/lint.yaml` -- cases `code-span-placeholder` (Go, C, C++, Rust, Python, with Markdown as the control), `url-placeholder` (Go, C, Python, and Clojure through the regex fallback) and `doc-opener-placeholder`.
 
@@ -175,16 +189,39 @@ masked with one `*` per character, with a line break inside a fence surviving
 as one, so every line and every column is preserved and an alert still maps back
 onto the source; "Masked comment text is a run no rule crosses" says why `*`. A
 fence is masked first, so the backticks opening and closing it cannot pair with
-the ones a span inside it carries.
+the ones a span inside it carries. A fence that never closes stays prose.
+
+Rejected:
+
+- Inline spans alone: sample output and calls inside a fence drew spelling and
+  style alerts as prose.
+- `~~~` fences and indented blocks as well: an indented list line or wrapped
+  text in a comment would lose every prose check, and what counts as indented
+  differs with each comment style.
+
+Accepted cost: a `~~~` fence or an indented sample in a comment is read as
+prose.
+
+The end-to-end cases prove a masked span counts as no word with a word count
+per comment (`scope: comment`). A sentence-length rule cannot: a code comment is
+never split into sentences, as upstream reads it, so a sentence-scoped rule
+stays silent there whatever the mask does. Rejected: splitting comments into
+sentences, since every sentence rule of every style would then fire in code
+comments; and no word probe, since nothing would then check what a masked span
+counts as.
+
+A YAML or TOML file's comments that a tree-sitter View reads take the same path
+as a source file's, so they are masked the same way. A data file no View names
+is read as plain lines, which nothing masks.
 
 - `internal/lint/code_ts.go` — `maskCode`, `fencedCode`, `inlineCode`, `maskKeepingLines`.
-- `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`.
+- `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`; `testdata/e2e/views.yaml` case `yaml-code-span`.
 
 ### A doc comment's opening run reads as code
 
-Go, C, Swift and Rust all ask a doc comment to open with the name it documents,
-and no markup is allowed in that position — the one place backticks cannot
-reach. That run is masked, as inline code is, so a documented symbol reads as
+Go asks a doc comment to open with the name it documents, and C, C++ and Rust
+code often does the same. No markup is allowed in that position — the one place
+backticks cannot reach. That run is masked, as inline code is, so a documented symbol reads as
 code rather than as prose. One comment may document several symbols at once,
 written as names separated by slashes, and every name in the run is masked.
 
@@ -199,7 +236,10 @@ position after the word `Package`.
 The mask applies only in a language whose convention it is: Go and the C family
 (`Language.OpensWithName` on Go, C, C++ and Rust). Elsewhere a comment's first
 word is prose, because a JavaScript comment above a line that happens to use
-the same word documents nothing by name. Upstream masks a Go doc comment's
+the same word documents nothing by name. Go alone, the one language whose
+documentation tool states the convention, is too narrow: C, C++ and Rust code
+opens a comment with the symbol's name often enough, and the match against the
+declaration below keeps the mask to a real symbol name. Upstream masks a Go doc comment's
 declared name itself (`DocName`, `leadingMask`); the fork's mask goes further,
 to every name in a slash-separated run and to the name after `Package`, and the
 two agree wherever both apply.
@@ -447,6 +487,7 @@ comments are prose.
 
 - `internal/core/format.go`, `internal/lint/code/lang.go`, `internal/lint/code/sh.go`.
 - `internal/lint/code/sh_test.go`; `testdata/e2e/lint.yaml` case `shell-script-comments`.
+- In the `fza` merge: `testdata/e2e/lint.yaml` case `shell-code-span`, the code span mask in a shell comment, which needs `feat/comment-code-mask` as well.
 
 ### A build file is parsed as code, matched by name where it has no extension
 
@@ -743,13 +784,20 @@ Rejected:
   with nothing to report.
 - A directory per configuration: only cheaper deletion, which epochs already
   give.
+- A warning on stderr for a record that cannot be read back: new output that
+  editors and CI capture, for a case the CRC and the version in the salt make
+  close to unreachable, while the miss already gives the right answer and the
+  next store replaces the record.
+- Failing the run on such a record: linting would wait for a `vale cache-clean`
+  although the answer can be computed.
 
 Accepted costs: an on-disk format of the fork's own, held by its tests; up to
 200 ms of upkeep after a run has reported, before it exits; a process that
 outlives the run which started it, once per machine, to delete the earlier
 layout; and a hidden command for it. An earlier build sharing the directory
 recreates its shard directories, which the next sweep moves aside and hands to
-another clean.
+another clean. A cache that keeps getting damaged, by a failing disk, shows only
+as slower runs.
 
 - `internal/cache/cache.go`: the store (`Open`, `Key`, `Get`, `Put`, `Flush`, `Close`, `Clean`, `Size`, `Dir`).
 - `internal/cache/tail.go`, `internal/cache/segment.go`, `internal/cache/manifest.go`: the on-disk format.
@@ -837,7 +885,7 @@ replaces, and what the fork's test data says instead.
 | Case | Upstream | This fork |
 |---|---|---|
 | `testdata/e2e/misc.yaml`, `vocab-multiple` | Two vocabularies spelling one token differently: the later one wins, and the earlier spelling is reported. | Both spellings are accepted, and neither is reported. |
-| `testdata/e2e/config-flags.yaml`, `glob`, `glob-negated`, `glob-negated-multi` | `fixtures/formats` is linted whole, and the `.vale.ini` files in `adoc/`, `rst/` and `subdir3/` are fixtures of their own that nothing reads. | Those files are nested configurations, and `adoc/.vale.ini` holds a run-wide `[asciidoctor]` section, which a nested file is refused for. The cases run with `--no-nested`, which reads the tree the way upstream does. |
+| `testdata/e2e/config-flags.yaml`, `glob`, `glob-negated`, `glob-negated-multi` | `fixtures/formats` is linted whole, and the `.vale.ini` files in `adoc/`, `rst/` and `subdir3/` are fixtures of their own that nothing reads. | Those files are nested configurations, and `adoc/.vale.ini` holds a run-wide `[asciidoctor]` section, which a nested file is refused for. The cases run with `--no-nested`, which reads the tree the way upstream does. Rejected: expecting the refusal, since the cases would then test nested configuration rather than globs; moving the fixture configurations, since the adoc, rst and `subdir3` cases would need new paths and every upstream release would conflict on them. |
 
 ## What proves it survives
 
@@ -951,7 +999,7 @@ a commit upstream has since made redundant, and rebuilding `fza` from upstream
 by merging the branches again. A conflict between two fork changes is resolved
 in the merge that brings the second one in.
 
-A branch cut from upstream lifts out as an upstream pull request as it stands,
+A branch cut from upstream lifts out of the fork as it stands,
 and `git log --first-parent upstream/v3..fza` lists the fork's changes one merge
 per line.
 
@@ -978,53 +1026,26 @@ release branch, so each is force-pushed to the fork remote.
 
 ### Upstream pull requests
 
-A fork change goes back to `errata-ai/vale` as a pull request from a `pr/`
-branch, which the owner files; an agent never files one. A `pr/` branch starts
-at the tip of `upstream/v3`, the branch upstream merges into, and holds the
-change branch's own commits, cherry-picked with their messages as written:
-no squash, no rebase of the change branch itself, and no new commit but a
-conflict's resolution. The change branches and `fza` are left as they are, and
-nothing is force-pushed.
+No fork change goes to `errata-ai/vale` as a pull request. A separate prose
+linter, no longer tied to Vale, takes over what this fork carries, so a pull
+request upstream costs review rounds and rebases onto a moving tip for a tool
+the fork leaves behind.
 
-A change branch whose own commits apply to the upstream tip and pass `go vet`
-there is a pull request of its own, `pr/<prefix>-<name>`:
-`pr/fix-vocab-spellings`. One that does not, because it builds on another
-change branch, ships in one pull request with the branch it builds on: a
-bundle. A bundle is named by its members, base first, each by a short name,
-joined by hyphens, under one prefix, `feat` when any member is a feature:
-`pr/feat-cache-nested` holds `feat/result-cache` and `feat/nested-config`.
-
-| Member | Short name |
-|---|---|
-| `feat/result-cache` | `cache` |
-| `feat/nested-config` | `nested` |
-| `fix/comment-directive` | `directive` |
-| `feat/tag-directive` | `tag` |
-| `feat/shell-code` | `shell` |
-| `feat/build-file-code` | `build-file` |
-| `feat/go-literal-scope` | `go-literal` |
-| `feat/php-ts-literal-scope` | `php-ts` |
-| `feat/vue-code` | `vue` |
-| `feat/svelte-code` | `svelte` |
-
-A `pr/` branch is ready when `go vet` and the suite pass on it and it carries no
-fork-only file: `git diff upstream/v3 pr/<name> -- CHANGES.fza.md CLAUDE.md
-UPSTREAM-MERGE.md .github .goreleaser*` prints nothing. `feat/fork-release` and
-`fix/fork-version-floor` are fork-only and never become one.
+The `pr/` branches on `origin` each hold a change branch's own commits,
+cherry-picked onto the tip of `upstream/v3`. They stay until the next upstream
+release is taken: the upstream tip they sit on goes into that release, so a
+change branch commit that conflicts with it takes the resolution its `pr/` twin
+already holds. Once `fza` is rebuilt and pushed, every `pr/` branch is deleted,
+locally and on `origin` (`UPSTREAM-MERGE.md`, "Procedure").
 
 Rejected:
 
-- `pr/` branches cut from the upstream release the fork is built on: the picks
-  apply cleanly, but every branch is rebased again at filing, since upstream
-  merges into its tip.
-- Stacked pull requests, one per change branch, each on the one below: upstream
-  would review and merge them in order, and a change that cannot build alone
-  cannot be judged alone either.
-- A bundle named after its top member alone, or after its base with a `bundle-`
-  prefix: either hides a member a reviewer then has to look up.
-- Members joined by `+`, `_` or `.`: longer names, or a character that reads as
-  something else.
+- Filing the `pr/` branches: upstream review and a rebase at every tip move,
+  for changes the separate linter carries on its own.
+- Deleting the `pr/` branches at once: the next upstream rebase then resolves
+  by hand every conflict they already resolve.
+- Keeping the filing procedure and marking it paused: a procedure nobody runs,
+  kept in step at every rebase.
 
-Accepted cost: a conflict with the upstream tip is resolved when the `pr/`
-branch is built and again when the tip moves before filing, and a bundle's name
-does not show where one member's name ends; the table does.
+Accepted cost: the `pr/` branches stay on `origin` until the next upstream
+rebase, and that rebase carries a removal step.
