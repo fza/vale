@@ -30,6 +30,7 @@ consumer.
 | `.mk`, `.mak`, `.make`, `Makefile`, `makefile`, `GNUmakefile` | Format | Read as code: only the comments are prose. |
 | `.vue` | Format | Read as code: the script blocks alone, with the TypeScript grammar. The template and the style reach no rule. |
 | `.svelte` | Format | Read as code: the script blocks and every markup expression with the TypeScript grammar, the markup comments, and the style's comments. The template's visible text reaches no rule. |
+| `CommentedCode` | Configuration | Per glob section, what a comment line the file's grammar reads as code gets: `lint` (the default) reads it as prose, `mask` keeps it from every rule, `flag` also reports each run of such lines as `Vale.CommentedCode`. |
 
 ## Correctness
 
@@ -512,6 +513,80 @@ to its last whole part.
 
 - `internal/lint/code/phpdoc.go` — `PHPDoc`, `phpTagShapes`, `phpToolTagShapes`, `scanPHPType`, `scanPHPTypeAndVar`, `phpRowsEnd`, `balancedEnd`; set as `Language.Doc` in `php.go`.
 - `internal/lint/code/phpdoc_internal_test.go`; `testdata/e2e/lint.yaml` case `php-doc-tags`.
+
+### Commented-out code is masked or flagged, per section
+
+Code taken out of a build by commenting it is read as prose like every other
+comment line, so `// $this->assertTrue($result, 'Section changed');` reports
+its variable names as misspellings. A glob section's `CommentedCode` key sets
+what such a line gets:
+
+- `lint`, the default: read as prose, as upstream reads it;
+- `mask`: blanked before any rule reads the comment, so no rule reaches it;
+- `flag`: masked, and each run of such lines reported once as
+  `Vale.CommentedCode`, a warning. A section sets its level, or switches it
+  off, as it does a rule's (`Vale.CommentedCode = error`, `= NO`).
+
+Another value is an error, and so is the key outside a glob section. A later
+section matching the file overrides an earlier one, as `Lang` does.
+
+A line is code when the file's own grammar reads it alone, with no error, as
+more than one token: the method of go-critic's `commentedOutCode` checker,
+carried from Go's parser to every grammar Vale reads comments with. A line is
+judged on its own, so a prose line inside a commented-out block stays prose. A
+Go line is read inside a function, a PHP line after `<?php`, a C or Protobuf
+line at the top level and inside a body; a line opening a block, `if ($ready)
+{`, is read with the block closed, and one closing it, `} else {`, with the
+block opened.
+
+Gates come first, all erring toward prose, since a line wrongly taken for code
+reaches no rule while one wrongly taken for prose is linted as it always was.
+A line is prose when it holds only words and sentence punctuation, ends in a
+full stop, opens with a note marker (TODO, FIXME, e.g.) or a URL, holds one
+word with no call, assignment or statement end, opens a markup tag with no
+`{` expression, is a list of choices (`active | disabled`), holds a
+placeholder (`<target>`), is one Markdown code span, or, in a grammar that
+rejects a sentence, opens with a capitalised label (`Default:`). Ruby, Kotlin,
+Lua, Elixir, Julia, a shell script and a makefile read ordinary sentences as
+calls or commands and YAML reads them as entries, so a line there also has to
+hold a code signal (an assignment, a call right after a name, a statement end,
+a sigil, an arrow) and no two words side by side past the first. R is read
+with Bash's grammar, which is not R's, and any sentence is valid Svelte markup,
+so an R line and a line in a Svelte component's markup comment are code by
+their shape alone: an R assignment, call or block head; a tag holding an
+expression or a block tag. Each part of a Svelte component is judged by its
+own grammar. The cost: a line of bare words, `return value` or `import os`,
+is read as prose.
+
+The code is found within each run a `vale` directive leaves, so code under
+`vale off` is neither linted nor flagged. A string literal is code already
+and is never touched.
+
+A run is a stretch of code lines; a line without a word between two of them
+(an empty line, a lone `);`) joins it, and so does a closing `}` after its
+last line. Code in a documentation comment (a comment documenting a
+declaration, or one opened `/**`, `///`, `//!`, `/*!` or as a docstring) is
+an example: masked, never flagged. Go's cgo preamble, the comment above
+`import "C"`, is C the build reads: masked whole, never flagged.
+
+A YAML or TOML file is read as lines, not as code, unless a View names its
+grammar, so the key reaches its comments only then.
+
+Rejected:
+
+- A heuristic of symbol density, as SonarQube's and ESLint plugins' checks
+  use: no grammar, and a line dense in punctuation is read as code in every
+  language alike.
+- Masking whole comments that hold code: a dead docblock keeps its prose
+  lines, which still deserve linting.
+- Masking by default: a team that writes no commented-out code should see no
+  change.
+
+- `internal/lint/code/commented.go` — `CodeLines`, `HideCode`, `CodeRun`, the gates, `cgoPreamble`; `Language.CodeFrames`, `CodeSignal`, `CodeUnparsed`, `LiveCode` and `Comment.Live` in `lang.go` and `comments.go`, set per language.
+- `internal/core/config.go` — `CommentedLint`, `CommentedMask`, `CommentedFlag`, `Config.CommentedCode`; `internal/core/ini.go` — the `CommentedCode` key; `internal/core/file.go` — `File.Commented`.
+- `internal/lint/code_ts.go` — `hideCode`, `flagCode`, called from `lintCode` and `lintFragments`.
+- `internal/lint/code/commented_test.go`, `commented_fork_test.go` (shell, makefile, Svelte); `testdata/e2e/commented-code.yaml`.
+- In the `fza` merge: `Comment.grammar`, Svelte's `svelteTagCode`, the shell and makefile `CodeSignal`, `hideCode` per directive run.
 
 ## Performance
 
