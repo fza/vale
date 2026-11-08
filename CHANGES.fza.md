@@ -65,7 +65,22 @@ A fork build is tagged as a prerelease of its upstream base, `v3.25.1-fza.1`,
 and a semver constraint naming no prerelease excludes every prerelease, so
 `vale sync` refused a package asking for `>=3.0.0`. A version whose prerelease
 opens with `fza.` is measured by the release it carries; any other prerelease
-keeps upstream's reading.
+keeps upstream's reading. Only that check reads the release alone: `vale
+--version`, the `vale sync` refusal message, the tags and the cask keep
+`-fza.N`, so a fork build still names which fork release it is.
+
+Rejected:
+
+- Every constraint including prereleases (semver's `IncludePrerelease`, from
+  `Masterminds/semver` v3.4.0 on): it changes how upstream's own prereleases
+  are read, and `v3.25.1-fza.1` still fails `>=3.25.1`, since a prerelease sorts
+  below its release.
+- A fork tag that is no prerelease: every other form is rejected under the
+  release tag (GoReleaser refuses `v3.25.1.fza.1`; `+fza.N` makes every fork
+  release on one base compare equal).
+
+Accepted cost: a package demanding an upstream prerelease cannot tell a fork
+build from the plain release it carries.
 
 - `cmd/vale/pkgver.go` — `supportsVale`, `forkPrerelease`.
 - `cmd/vale/pkgver_test.go` — `TestSupportsValeOnAForkBuild`.
@@ -131,7 +146,7 @@ mask appears, as it already did for the same line in Markdown.
 
 - `internal/lint/code_ts.go` -- `maskKeepingLines` under `maskCode`, `mask` under `maskDocOpener`.
 - `internal/lint/code.go` -- `maskURLs`.
-- `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone.
+- `internal/nlp/provider.go` -- `BlankRunes` removed, its one caller gone. The package is internal, so no consumer imports it; a caller a later upstream release adds fails to compile at the rebase. Kept as an unused wrapper to spare that conflict: rejected, since code nobody calls is removed.
 - `internal/lint/code_test.go` -- `TestMaskCode`, `TestMaskURLs`; `internal/lint/docopener_test.go`.
 - `testdata/e2e/lint.yaml` -- cases `code-span-placeholder` (Go, C, C++, Rust, Python, with Markdown as the control), `url-placeholder` (Go, C, Python, and Clojure through the regex fallback) and `doc-opener-placeholder`.
 
@@ -174,16 +189,39 @@ masked with one `*` per character, with a line break inside a fence surviving
 as one, so every line and every column is preserved and an alert still maps back
 onto the source; "Masked comment text is a run no rule crosses" says why `*`. A
 fence is masked first, so the backticks opening and closing it cannot pair with
-the ones a span inside it carries.
+the ones a span inside it carries. A fence that never closes stays prose.
+
+Rejected:
+
+- Inline spans alone: sample output and calls inside a fence drew spelling and
+  style alerts as prose.
+- `~~~` fences and indented blocks as well: an indented list line or wrapped
+  text in a comment would lose every prose check, and what counts as indented
+  differs with each comment style.
+
+Accepted cost: a `~~~` fence or an indented sample in a comment is read as
+prose.
+
+The end-to-end cases prove a masked span counts as no word with a word count
+per comment (`scope: comment`). A sentence-length rule cannot: a code comment is
+never split into sentences, as upstream reads it, so a sentence-scoped rule
+stays silent there whatever the mask does. Rejected: splitting comments into
+sentences, since every sentence rule of every style would then fire in code
+comments; and no word probe, since nothing would then check what a masked span
+counts as.
+
+A YAML or TOML file's comments that a tree-sitter View reads take the same path
+as a source file's, so they are masked the same way. A data file no View names
+is read as plain lines, which nothing masks.
 
 - `internal/lint/code_ts.go` — `maskCode`, `fencedCode`, `inlineCode`, `maskKeepingLines`.
-- `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`.
+- `internal/lint/code_test.go`; `testdata/e2e/lint.yaml` case `code-span-placeholder`; `testdata/e2e/views.yaml` case `yaml-code-span`.
 
 ### A doc comment's opening run reads as code
 
-Go, C, Swift and Rust all ask a doc comment to open with the name it documents,
-and no markup is allowed in that position — the one place backticks cannot
-reach. That run is masked, as inline code is, so a documented symbol reads as
+Go asks a doc comment to open with the name it documents, and C, C++ and Rust
+code often does the same. No markup is allowed in that position — the one place
+backticks cannot reach. That run is masked, as inline code is, so a documented symbol reads as
 code rather than as prose. One comment may document several symbols at once,
 written as names separated by slashes, and every name in the run is masked.
 
@@ -198,7 +236,10 @@ position after the word `Package`.
 The mask applies only in a language whose convention it is: Go and the C family
 (`Language.OpensWithName` on Go, C, C++ and Rust). Elsewhere a comment's first
 word is prose, because a JavaScript comment above a line that happens to use
-the same word documents nothing by name. Upstream masks a Go doc comment's
+the same word documents nothing by name. Go alone, the one language whose
+documentation tool states the convention, is too narrow: C, C++ and Rust code
+opens a comment with the symbol's name often enough, and the match against the
+declaration below keeps the mask to a real symbol name. Upstream masks a Go doc comment's
 declared name itself (`DocName`, `leadingMask`); the fork's mask goes further,
 to every name in a slash-separated run and to the name after `Package`, and the
 two agree wherever both apply.
@@ -446,6 +487,7 @@ comments are prose.
 
 - `internal/core/format.go`, `internal/lint/code/lang.go`, `internal/lint/code/sh.go`.
 - `internal/lint/code/sh_test.go`; `testdata/e2e/lint.yaml` case `shell-script-comments`.
+- In the `fza` merge: `testdata/e2e/lint.yaml` case `shell-code-span`, the code span mask in a shell comment, which needs `feat/comment-code-mask` as well.
 
 ### A build file is parsed as code, matched by name where it has no extension
 
@@ -742,13 +784,20 @@ Rejected:
   with nothing to report.
 - A directory per configuration: only cheaper deletion, which epochs already
   give.
+- A warning on stderr for a record that cannot be read back: new output that
+  editors and CI capture, for a case the CRC and the version in the salt make
+  close to unreachable, while the miss already gives the right answer and the
+  next store replaces the record.
+- Failing the run on such a record: linting would wait for a `vale cache-clean`
+  although the answer can be computed.
 
 Accepted costs: an on-disk format of the fork's own, held by its tests; up to
 200 ms of upkeep after a run has reported, before it exits; a process that
 outlives the run which started it, once per machine, to delete the earlier
 layout; and a hidden command for it. An earlier build sharing the directory
 recreates its shard directories, which the next sweep moves aside and hands to
-another clean.
+another clean. A cache that keeps getting damaged, by a failing disk, shows only
+as slower runs.
 
 - `internal/cache/cache.go`: the store (`Open`, `Key`, `Get`, `Put`, `Flush`, `Close`, `Clean`, `Size`, `Dir`).
 - `internal/cache/tail.go`, `internal/cache/segment.go`, `internal/cache/manifest.go`: the on-disk format.
@@ -836,7 +885,7 @@ replaces, and what the fork's test data says instead.
 | Case | Upstream | This fork |
 |---|---|---|
 | `testdata/e2e/misc.yaml`, `vocab-multiple` | Two vocabularies spelling one token differently: the later one wins, and the earlier spelling is reported. | Both spellings are accepted, and neither is reported. |
-| `testdata/e2e/config-flags.yaml`, `glob`, `glob-negated`, `glob-negated-multi` | `fixtures/formats` is linted whole, and the `.vale.ini` files in `adoc/`, `rst/` and `subdir3/` are fixtures of their own that nothing reads. | Those files are nested configurations, and `adoc/.vale.ini` holds a run-wide `[asciidoctor]` section, which a nested file is refused for. The cases run with `--no-nested`, which reads the tree the way upstream does. |
+| `testdata/e2e/config-flags.yaml`, `glob`, `glob-negated`, `glob-negated-multi` | `fixtures/formats` is linted whole, and the `.vale.ini` files in `adoc/`, `rst/` and `subdir3/` are fixtures of their own that nothing reads. | Those files are nested configurations, and `adoc/.vale.ini` holds a run-wide `[asciidoctor]` section, which a nested file is refused for. The cases run with `--no-nested`, which reads the tree the way upstream does. Rejected: expecting the refusal, since the cases would then test nested configuration rather than globs; moving the fixture configurations, since the adoc, rst and `subdir3` cases would need new paths and every upstream release would conflict on them. |
 
 ## What proves it survives
 
