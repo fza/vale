@@ -27,7 +27,7 @@ on:
     inputs:
       base:
         description: Ref to compare against
-        default: v3
+        default: main
 
 permissions:
   contents: read
