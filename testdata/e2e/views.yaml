@@ -109,6 +109,47 @@ cases:
       values.yaml:4:19:T.Todo:found TODO
       values.yaml:7:8:T.Todo:found TODO
 
+  - name: yaml-code-span
+    about: "a code span in a YAML comment a tree-sitter View reads is a run no
+      rule crosses and no rule counts as a word, as in a source file's comment:
+      Repetition and a phrase never join the words on either side of it, and an
+      alert after it keeps its column"
+    files:
+      .vale.ini: |
+        StylesPath = styles
+        MinAlertLevel = suggestion
+
+        [*.yml]
+        BasedOnStyles = Vale, Probe
+        View = Comments
+      styles/config/views/Comments.yml: |
+        engine: tree-sitter
+        scopes:
+          - expr: (comment)+ @comment
+      styles/Probe/Phrase.yml: |
+        extends: existence
+        message: "Phrase '%s' crossed a code span."
+        level: error
+        tokens:
+          - call answers
+      styles/Probe/Words.yml: |
+        extends: occurrence
+        message: "A code span counted as a word."
+        scope: comment
+        level: error
+        max: 21
+        token: '\b(\w+)\b'
+      probe.yml: |
+        # It reads the `config` the daemon writes.
+        # Open the call `Open` answers there.
+        # Run it once more `go vet ./...` then stop.
+        # Keep the `zzqxé` valuue here.
+        replicaCount: 1
+    args: --output=line --no-exit probe.yml
+    exit: 0
+    want: |
+      probe.yml:4:20:Vale.Spelling:Did you really mean 'valuue'?
+
   - name: text
     about: "a `textfsm` view reads plain text through a template and names
       what it captures. The commit message yields a subject, a body, and
