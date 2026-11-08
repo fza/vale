@@ -37,6 +37,7 @@ nonword
 npm
 ot
 passthrough
+PHPDoc
 pipenv
 pre
 Promptless
@@ -53,5 +54,6 @@ Spotify
 testthedocs
 textlint
 tox
+Vue
 Wireshark
 [cC]onfigs?
