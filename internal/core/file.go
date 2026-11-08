@@ -96,6 +96,7 @@ type File struct {
 	Path       string            // the full path
 	NormedPath string            // the normalized path
 	Transform  string            // XLST transform
+	Commented  string            // what commented-out code gets: CommentedLint, CommentedMask or CommentedFlag
 	Held       map[string]bool   // the conditional sections whose `if` held
 	RealExt    string            // actual file extension
 	Checks     map[string]bool   // syntax-specific checks assigned in .vale
@@ -289,6 +290,15 @@ func buildFile(path, ext, format string, fbytes []byte, lookup bool, config *Con
 		}
 	}
 
+	commented := CommentedLint
+	for _, sec := range config.RuleKeys {
+		if config.SectionApplies(sec, held, path) {
+			if mode, ok := config.CommentedCode[sec]; ok {
+				commented = mode
+			}
+		}
+	}
+
 	transform := ""
 	if p, found := config.Stylesheets["*"]; found {
 		transform = p
@@ -315,7 +325,7 @@ func buildFile(path, ext, format string, fbytes []byte, lookup bool, config *Con
 		BaseStyles: baseStyles, Checks: checks, Levels: levels, Unset: unset, Vocab: vocab,
 		Lines: lines, Content: content,
 		Comments: make(map[string]bool), history: make(map[string]int),
-		simple: config.Flags.Simple, Transform: transform, Held: held,
+		simple: config.Flags.Simple, Transform: transform, Commented: commented, Held: held,
 		limits: make(map[string]int), Path: path, Metrics: make(map[string]int),
 		NLP:    nlp.Info{Endpoint: config.NLPEndpoint, Lang: lang},
 		Lookup: lookup, NormedPath: normed,

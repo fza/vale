@@ -36,6 +36,11 @@ type Comment struct {
 	// Masks are the ranges of Text that hold no prose; an alert whose match
 	// lies inside one is dropped. See doc.go.
 	Masks []Mask `json:"-"`
+	// Live marks a comment the build reads as code. See Language.LiveCode.
+	Live bool `json:"-"`
+	// grammar is the language that found the comment: the file's own, or
+	// one embedded in it, as a Svelte component's markup and style are.
+	grammar *Language
 }
 
 // StripAt returns what came off the front of a line, 1-based as alerts are.
@@ -148,6 +153,7 @@ func coalesce(comments []Comment) []Comment {
 			if comment.Doc != "" {
 				joined[len(joined)-1].Doc = comment.Doc
 			}
+			joined[len(joined)-1].Live = comment.Live
 		}
 	}
 
@@ -230,6 +236,7 @@ func grammarComments(source []byte, lang *Language) ([]Comment, error) {
 	comments, literals := splitLiterals(comments)
 	joined := coalesce(dropDirectives(dropShebang(comments), lang))
 	for i, c := range joined {
+		joined[i].grammar = lang
 		if lang.Doc != nil {
 			joined[i].Masks = lang.Doc(c.Text)
 		}

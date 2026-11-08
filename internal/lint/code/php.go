@@ -18,10 +18,11 @@ import (
 // they share, which is the indentation PHP itself removes.
 func PHP() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`//|/\*\*?|\*/|#`),
-		Prefix:  cStylePrefix,
-		Parser:  php.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Delims:     regexp.MustCompile(`//|/\*\*?|\*/|#`),
+		Prefix:     cStylePrefix,
+		Parser:     php.GetLanguage(),
+		CodeFrames: [][2]string{{"<?php\n", ""}},
+		Queries:    []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
 		Literals: []core.Scope{
 			{Name: "", Expr: `[
   (string)

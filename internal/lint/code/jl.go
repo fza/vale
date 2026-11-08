@@ -9,8 +9,9 @@ import (
 
 func Julia() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`#|#=|=#`),
-		Parser: julia.GetLanguage(),
+		Delims:     regexp.MustCompile(`#|#=|=#`),
+		Parser:     julia.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: "(line_comment)+ @comment", Type: ""},
 			{Name: "", Expr: "(block_comment)+ @comment", Type: ""},

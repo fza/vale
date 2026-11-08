@@ -9,8 +9,9 @@ import (
 
 func Lua() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`--\[=*\[|\]=*\]|--`),
-		Parser: lua.GetLanguage(),
+		Delims:     regexp.MustCompile(`--\[=*\[|\]=*\]|--`),
+		Parser:     lua.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: "(comment) @comment", Type: ""},
 			// `---` doc comments (including the `---[[` toggle idiom, which

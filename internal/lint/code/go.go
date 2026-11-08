@@ -18,8 +18,9 @@ import (
 // existing rule looks would report every one of them.
 func Go() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`//|/\*|\*/`),
-		Parser: golang.GetLanguage(),
+		Delims:     regexp.MustCompile(`//|/\*|\*/`),
+		Parser:     golang.GetLanguage(),
+		CodeFrames: [][2]string{{"package p\n", ""}, {"package p\nfunc _() {\n", "\n}"}},
 		Queries: []core.Scope{
 			{Name: "", Expr: "(comment) @comment", Type: ""},
 		},
@@ -36,6 +37,7 @@ func Go() *Language {
 		Directive:     goDirective,
 		Doc:           GoDoc,
 		DocName:       goDocName,
+		LiveCode:      cgoPreamble,
 		OpensWithName: true,
 	}
 }

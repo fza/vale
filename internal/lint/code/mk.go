@@ -15,8 +15,9 @@ import (
 // comment below one is captured exactly as a comment above it is.
 func Makefile() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`#`),
-		Parser: bash.GetLanguage(),
+		Delims:     regexp.MustCompile(`#`),
+		Parser:     bash.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: `(comment)+ @comment`, Type: ""},
 		},

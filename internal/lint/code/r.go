@@ -12,9 +12,11 @@ import (
 // that survive error recovery, which is all comment extraction needs.
 func R() *Language {
 	return &Language{
-		Delims:  regexp.MustCompile(`#'|#`),
-		Parser:  bash.GetLanguage(),
-		Queries: []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Delims:       regexp.MustCompile(`#'|#`),
+		Parser:       bash.GetLanguage(),
+		CodeSignal:   rCodeShape,
+		CodeUnparsed: true,
+		Queries:      []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
 		Padding: func(s string) int {
 			return computePadding(s, []string{"#", "#'"})
 		},

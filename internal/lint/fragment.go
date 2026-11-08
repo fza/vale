@@ -79,10 +79,16 @@ func (l *Linter) lintFragments(f *core.File) error {
 		}
 
 		format := commentFormat(comment, strings.TrimPrefix(f.NormedExt, "."))
-		err = l.lintComment(f, comment.Text, format, converted[i])
+		text, found := hideCode(f, lang, comment, comment.Text)
+		html := ""
+		if text == comment.Text {
+			html = converted[i]
+		}
+		err = l.lintComment(f, text, format, html)
 		if err != nil {
 			return err
 		}
+		l.flagCode(f, found)
 		f.Alerts = dropMasked(f.Alerts, last, comment)
 
 		size := len(f.Alerts)

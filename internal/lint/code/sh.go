@@ -9,8 +9,9 @@ import (
 
 func Shell() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`#`),
-		Parser: bash.GetLanguage(),
+		Delims:     regexp.MustCompile(`#`),
+		Parser:     bash.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: `(comment)+ @comment`, Type: ""},
 		},

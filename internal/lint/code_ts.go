@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vale-cli/vale/v3/internal/core"
 	"github.com/vale-cli/vale/v3/internal/lint/code"
@@ -66,8 +67,12 @@ func (l *Linter) lintCode(f *core.File) error {
 		}
 
 		err = eachDirectiveRun(f, text, func(run string) error {
-			// A batch converted the comment whole, which a run masked or
-			// split at a directive no longer is.
+			// Hidden run by run, so that code under `vale off` is not
+			// flagged either.
+			run, found := hideCode(f, lang, comment, run)
+
+			// A batch converted the comment whole, which a run masked,
+			// split at a directive, or cleared of code no longer is.
 			html := ""
 			if run == comment.Text {
 				html = converted[i]
@@ -76,6 +81,7 @@ func (l *Linter) lintCode(f *core.File) error {
 			if runErr != nil {
 				return runErr
 			}
+			l.flagCode(f, found)
 			f.Alerts = dropMasked(f.Alerts, last, comment)
 
 			size := len(f.Alerts)
@@ -174,6 +180,48 @@ func (l *Linter) rstBatch(f *core.File, comments []code.Comment, fallback string
 		out[i] = parts[k]
 	}
 	return out
+}
+
+// commentedCheck names the alert a run of commented-out code is reported as.
+const commentedCheck = "Vale.CommentedCode"
+
+// hideCode blanks the commented-out code in text, the comment's text or a
+// run of it, unless f has it linted as prose, and returns the runs of it. A
+// string literal is code already.
+func hideCode(f *core.File, lang *code.Language, comment code.Comment, text string) (string, []code.CodeRun) {
+	if f.Commented == core.CommentedLint || core.IsLiteral(comment.Scope) {
+		return text, nil
+	}
+	comment.Text = text
+	hidden, runs := lang.HideCode(comment)
+	return hidden.Text, runs
+}
+
+// flagCode reports each run of commented-out code, when f has it flagged.
+// The alerts are placed within the comment's text, as the comment's own
+// alerts are until adjustAlerts moves them.
+func (l *Linter) flagCode(f *core.File, runs []code.CodeRun) {
+	if f.Commented != core.CommentedFlag {
+		return
+	}
+	if on, set := f.Checks[commentedCheck]; set && !on {
+		return
+	}
+	level := f.Level(commentedCheck, "warning")
+	if core.LevelToInt[level] < l.Manager.Config.MinAlertLevel {
+		return
+	}
+	for _, run := range runs {
+		msg := "Commented-out code."
+		if n := run.Last - run.First + 1; n > 1 {
+			msg = fmt.Sprintf("Commented-out code, %d lines.", n)
+		}
+		f.Alerts = append(f.Alerts, core.Alert{
+			Check: commentedCheck, Severity: level, Message: msg, Match: run.Text,
+			Line: run.First,
+			Span: []int{run.Column, run.Column + utf8.RuneCountInString(run.Text) - 1},
+		})
+	}
 }
 
 // dropMasked removes the alerts, from last on, that the comment's

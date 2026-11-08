@@ -30,17 +30,27 @@ func Svelte() *Language {
 
 // svelteMarkup reads a component's `<!-- -->` comments. One addressed to a
 // tool -- `svelte-ignore`, a formatter's or linter's switch -- is dropped.
+//
+// Any sentence is valid Svelte, as text between tags, so a commented-out
+// line is markup by its shape alone: a tag holding an expression,
+// `<Button on:click={save} />`, or a block tag, `{#if open}`.
 func svelteMarkup() *Language {
 	return &Language{
-		Delims:    regexp.MustCompile(`<!--|-->`),
-		Parser:    svelte.GetLanguage(),
-		Queries:   []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
-		Directive: regexp.MustCompile(`^<!--[ \t]*(?:svelte-ignore\b|prettier-ignore\b|eslint-|biome-ignore\b)`),
+		Delims:       regexp.MustCompile(`<!--|-->`),
+		Parser:       svelte.GetLanguage(),
+		CodeSignal:   svelteTagCode,
+		CodeUnparsed: true,
+		Queries:      []core.Scope{{Name: "", Expr: "(comment) @comment", Type: ""}},
+		Directive:    regexp.MustCompile(`^<!--[ \t]*(?:svelte-ignore\b|prettier-ignore\b|eslint-|biome-ignore\b)`),
 		Padding: func(s string) int {
 			return computePadding(s, []string{"<!--"})
 		},
 	}
 }
+
+// svelteTagCode matches a whole line of Svelte markup that is code: a tag
+// holding an expression, or a block tag.
+var svelteTagCode = regexp.MustCompile(`^(</?[A-Za-z][\w:.-]*\b[^>]*\{[^}]*\}[^>]*/?>|\{[#:/@][a-z]+\b[^}]*\})`)
 
 // svelteStyle reads the comments of a component's `<style>` blocks with the
 // CSS grammar. A block written in SCSS or Less also holds `//` line comments,

@@ -28,8 +28,9 @@ import (
 // no prose, and neither matches a query that requires a string or sigil.
 func Elixir() *Language {
 	return &Language{
-		Delims: regexp.MustCompile(`#`),
-		Parser: elixir.GetLanguage(),
+		Delims:     regexp.MustCompile(`#`),
+		Parser:     elixir.GetLanguage(),
+		CodeSignal: codeSignal,
 		Queries: []core.Scope{
 			{Name: "", Expr: `(comment) @comment`, Type: ""},
 			// `@` applied to a call whose target names a documentation
