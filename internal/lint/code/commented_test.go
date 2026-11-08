@@ -93,7 +93,7 @@ var codeLines = map[string][]string{
 	".ex":    {"x = foo(1)", "IO.puts(x)"},
 	".jl":    {"x = foo(1)", "println(x)"},
 	".kt":    {"val x = foo(1)", "println(x)"},
-	".r":     {"x <- foo(1)", "print(x)", "library(dplyr)", "df$col <- 2", "foo(1) -> y"},
+	".r":     {"x <- foo(1)", "print(x)", "library(dplyr)", "df$col <- 2", "foo(1) -> y", "x <- c(1, 2, 3)", "f <- function(a) {"},
 	".yml":   {"key: value", "- name: build"},
 	".toml":  {`key = "value"`, "[tool.poetry]"},
 	".css":   {"color: red;", "a { color: red; }"},
@@ -126,6 +126,25 @@ func TestCommentedCode(t *testing.T) {
 
 // TestCommentedCodeMisses pins lines that are code but read as prose, the
 // cost of the gates that keep sentences from reading as code.
+// TestCommentedCodeShapes tests the prose a language's own shape or signal
+// keeps from reading as code, where the grammar would read it so.
+func TestCommentedCodeShapes(t *testing.T) {
+	prose := map[string][]string{
+		".r": {"x = the width of it"},
+	}
+	for ext, lines := range prose {
+		lang, err := GetLanguageFromExt(ext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range lines {
+			if lang.isCode(line) {
+				t.Errorf("%s: prose read as code: %q", ext, line)
+			}
+		}
+	}
+}
+
 func TestCommentedCodeMisses(t *testing.T) {
 	misses := map[string][]string{
 		".go":  {"return nil"},
