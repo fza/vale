@@ -137,11 +137,11 @@ const commentedCheck = "Vale.CommentedCode"
 
 // hideCode blanks the commented-out code in each comment, unless f has it
 // linted as prose, and returns each comment's runs of it by index.
-func hideCode(f *core.File, lang *code.Language, comments []code.Comment) [][]code.CodeRun {
+func hideCode(f *core.File, lang *code.Language, comments []code.Comment) [][]code.CommentedRun {
 	if f.Commented == core.CommentedLint {
 		return nil
 	}
-	runs := make([][]code.CodeRun, len(comments))
+	runs := make([][]code.CommentedRun, len(comments))
 	for i := range comments {
 		comments[i], runs[i] = lang.HideCode(comments[i])
 	}
@@ -151,7 +151,7 @@ func hideCode(f *core.File, lang *code.Language, comments []code.Comment) [][]co
 // flagCode reports each run of commented-out code in comment i, when f has
 // it flagged. The alerts are placed within the comment's text, as the
 // comment's own alerts are until adjustAlerts moves them.
-func (l *Linter) flagCode(f *core.File, runs [][]code.CodeRun, i int) {
+func (l *Linter) flagCode(f *core.File, runs [][]code.CommentedRun, i int) {
 	if f.Commented != core.CommentedFlag {
 		return
 	}
