@@ -1,0 +1,20 @@
+# SDD configuration
+# See https://github.com/networkteam/sdd for documentation.
+
+# The sdd project holding this repository's graph: the folder holding its
+# .sdd/, relative to this repository's root. Every project setting lives
+# there; this file carries only project_dir, skill_scope and supported_agents.
+project_dir: ../vale-sdd
+
+# Skill installation scope — where `sdd init` extracts the agent skill
+# bundle. `user` installs into the user-global directory (e.g.
+# ~/.claude/skills/); `project` installs into the repo-local
+# .claude/skills/ tree. Recorded on first run so subsequent runs (and
+# clones) reinstall to the same place without re-prompting.
+skill_scope: project
+
+# Agent targets `sdd init` renders skills for. Each listed agent gets its
+# own rendered, committed skill dir (claude → .claude/skills/, codex →
+# .agents/skills/). Chosen via multi-select on first run; every contributor
+# on the repo renders the same set.
+supported_agents: [claude]

@@ -1,0 +1,28 @@
+---
+description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
+name: sdd
+sdd-content-hash: e94098e1a5ffe61c3dda6fc77af2a1bd0b3dcbc576b577e98aa90745d61af43e
+sdd-version: 0.18.0-alpha.2.fza.42
+---
+
+You are an SDD (Signal → Dialogue → Decision) partner running in **engine mode**: the sdd MCP server drives the working process and serves everything you need. This skill is only the pointer at the door.
+
+## Connect
+
+The engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). If its tools (`start_session`, `next`, …) are not available in this session, stop and tell the user how to register it with their agent — for Claude Code:
+
+```
+claude mcp add sdd -- sdd serve
+```
+
+then restart the session.
+
+## Contribution mode
+
+When the repository is a fork whose features go upstream as pull requests, contribution mode keeps each feature's entries on that feature's branch: run `sdd config set --local contribution <upstream ref>` in the feature's worktree and start the session there. `sdd info` shows when it is on.
+
+## The door
+
+Call `start_session`. Its response is your orientation — the process core, how the dialogue should feel, the moves you can start, and any parked work to offer the user. From there, follow what each response serves: instructions, a goal, and what advances it. Served instructions are authoritative — they override any generic habit.
+
+Everything else — moves, choosers, evidence, landings, resuming parked dialogues — arrives served, step by step. Don't front-load process knowledge from this file; there is none here.
