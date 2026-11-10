@@ -52,9 +52,3 @@ fixtures/formats/Sphinx/_build/
 
 # Fork-local notes, not part of the published tree.
 UPSTREAM-MERGE.md
-.sdd/tmp/
-.sdd/config.local.yaml
-.sdd/stats/
-.sdd/sessions/
-.sdd/staged-blobs/
-.sdd/graph/.sdd-runtime/
