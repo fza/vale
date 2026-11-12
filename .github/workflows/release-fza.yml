@@ -1,20 +1,74 @@
 name: release (fza)
 
-# A fork release: a tag `v<upstream base>-fza.<N>` builds macOS and Linux,
-# publishes the GitHub release and writes the cask into the owner's tap.
-# Upstream's own release in main.yml skips these tags.
+# A fork release: a tag `v<upstream base>-fza.<N>` runs the test suite, then
+# builds macOS and Linux, publishes the GitHub release and writes the cask
+# into the owner's tap. This is the fork's only workflow: a red test stops the
+# release before anything is published.
 on:
   push:
     tags: ['v*-fza.*']
 
-# The job holds a token that writes to the tap, so every action and the
-# image are pinned by commit and digest rather than by a movable tag.
+# The release job holds a token that writes to the tap, so every action and
+# the image are pinned by commit and digest rather than by a movable tag.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  # The suite runs on Linux alone: the release builds macOS by cross-compiling
+  # on Linux, and the fork ships no Windows or wasm build.
+  test:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1" # required for the tree-sitter parsers
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # tags, for the version ldflag in `make build`
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      # The end-to-end suite lints AsciiDoc, reStructuredText, DITA, XML and
+      # Typst through these converters.
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1.338.0
+        with:
+          ruby-version: "3.3"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install documentation toolchain
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get install -y xsltproc
+          python -m pip install --upgrade docutils sphinx  # rst2html
+          gem install asciidoctor
+          cargo install --locked typst2vast  # runners ship a Rust toolchain
+          curl -fsSL -o dita-ot-3.6.zip \
+            https://github.com/dita-ot/dita-ot/releases/download/3.6/dita-ot-3.6.zip
+          unzip -q dita-ot-3.6.zip
+          echo "$PWD/dita-ot-3.6/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: make build os=linux exe=vale
+
+      - name: Test
+        run: make test
+        env:
+          VALE_E2E_STRICT: "1" # every converter above must really be present
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
